@@ -4,6 +4,8 @@ OpenSFS is a browser-based train/railway tycoon game built on real-world map dat
 timetable-ish simulation. It uses OpenStreetMap-derived railway tracks + stations, renders the
 world with Pixi.js, and layers a React UI on top.
 
+Created by Yan Malinovskiy.
+
 This repository is focused on:
 
 - Fast 2D map rendering of large railway networks (Pixi.js v8)
