@@ -80,6 +80,7 @@ export class Game {
   private timetableSystem: TimetableSystem
   private trainSystemsInitialized = false
   private onKeyDown: ((e: KeyboardEvent) => void) | null = null
+  private selectedTrainId: string | null = null
 
   constructor() {
     this.state = new GameState()
@@ -112,7 +113,8 @@ export class Game {
     this.debugOverlaySystem = new DebugOverlaySystem(
       this.trackGraph,
       this.trackReservationSystem,
-      this.signalSystem
+      this.signalSystem,
+      this.trainMovementSystem
     )
   }
 
@@ -150,6 +152,7 @@ export class Game {
     if (this.followTrainId === trainId) return
     this.followTrainId = trainId
     this.trainSystem.setProtectedTrainIds([trainId])
+    this.debugOverlaySystem.setDebugTrainId(trainId ?? this.selectedTrainId)
     for (const subscriber of this.followTrainSubscribers) {
       subscriber(trainId)
     }
@@ -648,8 +651,10 @@ export class Game {
   }
 
   setSelectedTrain(trainId: string | null): void {
+    this.selectedTrainId = trainId
     this.trainSystem.setSelectedTrainId(trainId)
     this.trainSystem.setProtectedTrainIds([this.followTrainId])
+    this.debugOverlaySystem.setDebugTrainId(this.followTrainId ?? trainId)
     this.scheduleRender()
   }
 
@@ -788,8 +793,10 @@ export class Game {
 
     const savedSignals = localStorage.getItem('debug.showSignals') === '1'
     const savedBlocks = localStorage.getItem('debug.showBlocks') === '1'
+    const savedRoute = localStorage.getItem('debug.showRoute') === '1'
     this.debugOverlaySystem.setShowSignals(savedSignals)
     this.debugOverlaySystem.setShowReservedBlocks(savedBlocks)
+    this.debugOverlaySystem.setShowTrainRoute(savedRoute)
 
     this.onKeyDown = (e: KeyboardEvent) => {
       const target = e.target
@@ -806,6 +813,12 @@ export class Game {
         const next = !this.debugOverlaySystem.getShowReservedBlocks()
         this.debugOverlaySystem.setShowReservedBlocks(next)
         localStorage.setItem('debug.showBlocks', next ? '1' : '0')
+        this.scheduleRender()
+        this.ensureTickerRunning()
+      } else if (key === 'p') {
+        const next = !this.debugOverlaySystem.getShowTrainRoute()
+        this.debugOverlaySystem.setShowTrainRoute(next)
+        localStorage.setItem('debug.showRoute', next ? '1' : '0')
         this.scheduleRender()
         this.ensureTickerRunning()
       }

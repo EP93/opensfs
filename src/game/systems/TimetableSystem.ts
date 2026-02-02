@@ -9,7 +9,7 @@ import type {
   TimetableEntry,
   TimetableStop,
 } from '@/types/timetable'
-import type { TrackGraph } from '../graph/TrackGraph'
+import type { PlannedStopConstraint, TrackGraph } from '../graph/TrackGraph'
 import type { TrainRegistry } from '../registries/TrainRegistry'
 
 /** Timetable system configuration */
@@ -34,6 +34,7 @@ export class TimetableSystem {
   private spawnCursor = 0
   private trainIdByEntryId: Map<string, string> = new Map()
   private entryIdByTrainId: Map<string, string> = new Map()
+  private platformPlanByLineDir: Map<string, Array<string | null>> = new Map()
 
   private trackGraph: TrackGraph
   private trainRegistry: TrainRegistry
@@ -53,6 +54,7 @@ export class TimetableSystem {
    */
   registerLine(line: LineDefinition): void {
     this.lines.set(line.id, line)
+    this.ensurePlatformPlans(line)
   }
 
   /**
@@ -320,6 +322,9 @@ export class TimetableSystem {
       ? this.recalculateJourneyTimesReverse(line.journeyTimes)
       : journeyTimes
 
+    const planKey = this.platformPlanKey(line.id, reverse)
+    const platformPlan = this.platformPlanByLineDir.get(planKey)
+
     for (let i = 0; i < route.length; i++) {
       const stationId = route[i]
       const stationName = stationNames[i]
@@ -339,7 +344,7 @@ export class TimetableSystem {
         stationName,
         arrivalMinutes,
         departureMinutes: stopDepartureMinutes,
-        platform: null,
+        platform: platformPlan?.[i] ?? null,
         requestStop: false,
       })
     }
@@ -361,6 +366,47 @@ export class TimetableSystem {
     return reverseTimes
   }
 
+  private ensurePlatformPlans(line: LineDefinition): void {
+    this.platformPlanByLineDir.set(
+      this.platformPlanKey(line.id, false),
+      this.buildPlatformPlanForRoute(line.route)
+    )
+
+    if (line.bidirectional) {
+      this.platformPlanByLineDir.set(
+        this.platformPlanKey(line.id, true),
+        this.buildPlatformPlanForRoute([...line.route].reverse())
+      )
+    }
+  }
+
+  private buildPlatformPlanForRoute(route: string[]): Array<string | null> {
+    if (route.length === 0) return []
+
+    const plannedStops: PlannedStopConstraint[] = route.map((stationId) => ({
+      stationId,
+      platform: null,
+    }))
+
+    const destinationStationId = route[route.length - 1] ?? null
+    if (!destinationStationId) return route.map(() => null)
+
+    const { path, chosenStopNodeIds } = this.trackGraph.buildPathForPlannedStops(
+      plannedStops,
+      destinationStationId
+    )
+
+    if (!path.found || chosenStopNodeIds.length !== route.length) {
+      return route.map(() => null)
+    }
+
+    return chosenStopNodeIds.map((nodeId) => this.trackGraph.getStopPlatformRef(nodeId))
+  }
+
+  private platformPlanKey(lineId: string, reverse: boolean): string {
+    return `${lineId}|${reverse ? 'rev' : 'fwd'}`
+  }
+
   private spawnTrain(entry: TimetableEntry): void {
     const line = this.lines.get(entry.lineId)
     if (!line) {
@@ -376,8 +422,12 @@ export class TimetableSystem {
       return
     }
 
-    const stopStationIds = entry.stops.map((s) => s.stationId)
-    let { path } = this.trackGraph.buildPathForStops(stopStationIds)
+    const plannedStops: PlannedStopConstraint[] = entry.stops.map((s) => ({
+      stationId: s.stationId,
+      platform: s.platform,
+    }))
+
+    let { path } = this.trackGraph.buildPathForPlannedStops(plannedStops, destinationStationId)
     if (!path.found) {
       path = this.trackGraph.findPath(originStationId, destinationStationId)
       if (!path.found) {
