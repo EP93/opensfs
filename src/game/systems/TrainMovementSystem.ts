@@ -4,7 +4,12 @@
  */
 
 import type { OperationalState, TrainState } from '@/types/train'
-import type { PathPosition, PathResult, TrackGraph } from '../graph/TrackGraph'
+import type {
+  PathPosition,
+  PathResult,
+  PlannedStopConstraint,
+  TrackGraph,
+} from '../graph/TrackGraph'
 import type { TrainRegistry } from '../registries/TrainRegistry'
 import type { TimetableSystem } from './TimetableSystem'
 import type { TrackReservationSystem } from './TrackReservationSystem'
@@ -47,6 +52,8 @@ interface TrainMovementState {
   stopStationIds: string[]
   /** Offsets along the path where each stop occurs (parallel to stopStationIds) */
   stopOffsets: number[]
+  /** Chosen stop node IDs (parallel to stopStationIds) */
+  chosenStopNodeIds: string[]
   /** Dwell timer (seconds remaining at station) */
   dwellTimer: number
   /** Current stop index within stopStationIds */
@@ -94,30 +101,43 @@ export class TrainMovementSystem {
    */
   initializeTrain(train: TrainState): void {
     const entry = this.timetableSystem.getEntry(train.timetableEntryId)
-    const stopStationIds =
-      entry?.stops.map((s) => s.stationId).filter((id): id is string => Boolean(id)) ?? []
+    const plannedStops: PlannedStopConstraint[] =
+      entry?.stops
+        .map((s) => ({ stationId: s.stationId, platform: s.platform }))
+        .filter((s) => s.stationId.trim().length > 0) ?? []
 
     const shouldUseStops =
-      stopStationIds.length >= 2 &&
-      stopStationIds[0] === train.originStationId &&
-      stopStationIds[stopStationIds.length - 1] === train.destinationStationId
+      plannedStops.length >= 2 &&
+      plannedStops[0]?.stationId === train.originStationId &&
+      plannedStops[plannedStops.length - 1]?.stationId === train.destinationStationId
 
-    const plannedStops = shouldUseStops
-      ? stopStationIds
-      : [train.originStationId, train.destinationStationId]
+    const effectiveStops: PlannedStopConstraint[] = shouldUseStops
+      ? plannedStops
+      : [
+          { stationId: train.originStationId, platform: null },
+          { stationId: train.destinationStationId, platform: null },
+        ]
 
-    let { path, stopOffsets } = this.trackGraph.buildPathForStops(plannedStops)
-    let effectiveStops = plannedStops.filter((id) => id.trim().length > 0)
+    let { path, stopOffsets, chosenStopNodeIds } = this.trackGraph.buildPathForPlannedStops(
+      effectiveStops,
+      train.destinationStationId
+    )
+    let effectiveStopStationIds = effectiveStops.map((s) => s.stationId)
 
     // Fallback: if stop-to-stop pathing fails, at least move from origin to terminus.
     if (!path.found) {
-      const fallback = this.trackGraph.buildPathForStops([
-        train.originStationId,
-        train.destinationStationId,
-      ])
+      const fallbackStops: PlannedStopConstraint[] = [
+        { stationId: train.originStationId, platform: null },
+        { stationId: train.destinationStationId, platform: null },
+      ]
+      const fallback = this.trackGraph.buildPathForPlannedStops(
+        fallbackStops,
+        train.destinationStationId
+      )
       path = fallback.path
       stopOffsets = fallback.stopOffsets
-      effectiveStops = [train.originStationId, train.destinationStationId]
+      chosenStopNodeIds = fallback.chosenStopNodeIds
+      effectiveStopStationIds = fallbackStops.map((s) => s.stationId)
     }
 
     if (!path.found) {
@@ -127,20 +147,23 @@ export class TrainMovementSystem {
 
     const currentStopIndex = Math.min(
       Math.max(0, train.currentStopIndex),
-      effectiveStops.length - 1
+      effectiveStopStationIds.length - 1
     )
     const nextStopIndex =
-      currentStopIndex < effectiveStops.length - 1 ? currentStopIndex + 1 : currentStopIndex
+      currentStopIndex < effectiveStopStationIds.length - 1
+        ? currentStopIndex + 1
+        : currentStopIndex
 
     const movementState: TrainMovementState = {
       path,
       pathOffset: 0,
-      stopStationIds: effectiveStops,
+      stopStationIds: effectiveStopStationIds,
       stopOffsets,
+      chosenStopNodeIds,
       dwellTimer: 0,
       currentStopIndex,
       nextStopIndex,
-      currentStationId: effectiveStops[0] ?? train.originStationId,
+      currentStationId: effectiveStopStationIds[0] ?? train.originStationId,
       blockedAtOffset: null,
       blockedBlockId: null,
       approachTarget: null,

@@ -9,6 +9,7 @@ import type { Viewport } from '@/types/game'
 import type { NetworkData } from '@/types/network'
 import type { SignalSystem } from './SignalSystem'
 import type { TrackReservationSystem } from './TrackReservationSystem'
+import type { TrainMovementSystem } from './TrainMovementSystem'
 
 function hashColor(value: string): number {
   let hash = 2166136261
@@ -29,21 +30,26 @@ export class DebugOverlaySystem {
   private trackGraph: TrackGraph
   private reservationSystem: TrackReservationSystem
   private signalSystem: SignalSystem
+  private movementSystem: TrainMovementSystem | null
 
   private signalNodeIds: Array<{ signalId: string; nodeId: string }> = []
 
   private showSignals = false
   private showReservedBlocks = false
+  private showTrainRoute = false
+  private debugTrainId: string | null = null
   private lastViewport: Viewport | null = null
 
   constructor(
     trackGraph: TrackGraph,
     reservationSystem: TrackReservationSystem,
-    signalSystem: SignalSystem
+    signalSystem: SignalSystem,
+    movementSystem: TrainMovementSystem | null = null
   ) {
     this.trackGraph = trackGraph
     this.reservationSystem = reservationSystem
     this.signalSystem = signalSystem
+    this.movementSystem = movementSystem
 
     this.container = new Container()
     this.container.label = 'debug-overlays'
@@ -66,12 +72,26 @@ export class DebugOverlaySystem {
     this.invalidate()
   }
 
+  setShowTrainRoute(value: boolean): void {
+    this.showTrainRoute = value
+    this.invalidate()
+  }
+
+  setDebugTrainId(trainId: string | null): void {
+    this.debugTrainId = trainId
+    this.invalidate()
+  }
+
   getShowSignals(): boolean {
     return this.showSignals
   }
 
   getShowReservedBlocks(): boolean {
     return this.showReservedBlocks
+  }
+
+  getShowTrainRoute(): boolean {
+    return this.showTrainRoute
   }
 
   invalidate(): void {
@@ -83,7 +103,7 @@ export class DebugOverlaySystem {
   }
 
   render(viewport: Viewport): void {
-    if (!this.showSignals && !this.showReservedBlocks) {
+    if (!this.showSignals && !this.showReservedBlocks && !this.showTrainRoute) {
       this.graphics.clear()
       this.lastViewport = { ...viewport }
       return
@@ -104,6 +124,10 @@ export class DebugOverlaySystem {
 
     if (this.showReservedBlocks) {
       this.renderReservedBlocks(viewport, minX, maxX, minY, maxY)
+    }
+
+    if (this.showTrainRoute) {
+      this.renderTrainRoute(viewport, minX, maxX, minY, maxY)
     }
 
     if (this.showSignals) {
@@ -174,6 +198,54 @@ export class DebugOverlaySystem {
 
       this.graphics.circle(screen[0], screen[1], radius)
       this.graphics.fill({ color, alpha: 0.9 })
+    }
+  }
+
+  private renderTrainRoute(
+    viewport: Viewport,
+    minX: number,
+    maxX: number,
+    minY: number,
+    maxY: number
+  ): void {
+    const trainId = this.debugTrainId
+    if (!trainId) return
+    if (!this.movementSystem) return
+
+    const movement = this.movementSystem.getMovementState(trainId)
+    if (!movement) return
+
+    const path = movement.path
+    if (!path.found || path.segments.length === 0) return
+
+    const width = Math.max(2, Math.min(7, viewport.zoom / 0.012))
+    const color = hashColor(trainId)
+    this.graphics.setStrokeStyle({ width, color, alpha: 0.85, cap: 'round', join: 'round' })
+
+    for (const seg of path.segments) {
+      const coords = seg.link.coordinates
+      if (coords.length < 2) continue
+
+      const first = coords[0]
+      if (!first) continue
+      const firstScreen = worldToScreen(first, viewport)
+      if (
+        firstScreen[0] < minX - 800 ||
+        firstScreen[0] > maxX + 800 ||
+        firstScreen[1] < minY - 800 ||
+        firstScreen[1] > maxY + 800
+      ) {
+        // Cheap guard; still draw if potentially visible later in polyline.
+      }
+
+      this.graphics.moveTo(firstScreen[0], firstScreen[1])
+      for (let i = 1; i < coords.length; i++) {
+        const p = coords[i]
+        if (!p) continue
+        const s = worldToScreen(p, viewport)
+        this.graphics.lineTo(s[0], s[1])
+      }
+      this.graphics.stroke()
     }
   }
 

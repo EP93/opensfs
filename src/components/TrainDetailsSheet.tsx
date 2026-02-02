@@ -104,6 +104,10 @@ export function TrainDetailsSheet() {
       <SheetContent
         side="right"
         className="w-[460px] bg-db-dark border-db-gray-dark max-h-[100dvh] overflow-y-auto"
+        onInteractOutside={(event) => {
+          // Keep the train sheet open while the user interacts with the map/time controls.
+          event.preventDefault()
+        }}
       >
         <SheetHeader>
           <SheetTitle className="text-white text-xl">Train</SheetTitle>
