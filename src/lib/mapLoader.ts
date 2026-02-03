@@ -339,5 +339,6 @@ export function getAvailableRegions(): Array<{ id: string; name: string }> {
     { id: 'frankfurt', name: 'Frankfurt Region' },
     { id: 'cologne', name: 'Cologne-Bonn Region' },
     { id: 'freiburg', name: 'Freiburg Region' },
+    { id: 'rheintal', name: 'Rheintal (Basel–Karlsruhe)' },
   ]
 }

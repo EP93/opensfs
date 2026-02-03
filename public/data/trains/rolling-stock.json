@@ -1,6 +1,6 @@
 {
   "$schema": "./rolling-stock.schema.json",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "trainTypes": [
     {
       "id": "BR462",
@@ -10,7 +10,7 @@
       "operator": "DB Regio",
       "serviceCategories": ["RE", "RB"],
       "specifications": {
-        "length": 105,
+        "length": 105.3,
         "width": 2.82,
         "height": 4.28,
         "weight": 215,
@@ -25,7 +25,7 @@
         "acceleration": 1.0,
         "deceleration": 0.9,
         "emergencyDeceleration": 1.3,
-        "powerOutput": 4000,
+        "powerOutput": 3300,
         "tractionType": "electric",
         "voltages": ["15kV AC"],
         "adhesionCoefficient": 0.35
@@ -33,10 +33,64 @@
       "capacity": {
         "seatedFirstClass": 36,
         "seatedSecondClass": 364,
-        "standing": 330,
+        "standing": 240,
         "wheelchairSpaces": 4,
-        "bicycleSpaces": 12
+        "bicycleSpaces": 24
       },
+      "cars": [
+        {
+          "id": "A",
+          "class": "mixed",
+          "kind": "cab",
+          "lengthMeters": 26.0,
+          "capacity": {
+            "seatedFirstClass": 18,
+            "seatedSecondClass": 60,
+            "standing": 60,
+            "wheelchairSpaces": 1,
+            "bicycleSpaces": 0
+          }
+        },
+        {
+          "id": "B",
+          "class": "second",
+          "kind": "standard",
+          "lengthMeters": 26.0,
+          "capacity": {
+            "seatedFirstClass": 0,
+            "seatedSecondClass": 110,
+            "standing": 60,
+            "wheelchairSpaces": 1,
+            "bicycleSpaces": 0
+          }
+        },
+        {
+          "id": "C",
+          "class": "second",
+          "kind": "bike",
+          "lengthMeters": 27.3,
+          "capacity": {
+            "seatedFirstClass": 0,
+            "seatedSecondClass": 110,
+            "standing": 60,
+            "wheelchairSpaces": 2,
+            "bicycleSpaces": 24
+          }
+        },
+        {
+          "id": "D",
+          "class": "mixed",
+          "kind": "cab",
+          "lengthMeters": 26.0,
+          "capacity": {
+            "seatedFirstClass": 18,
+            "seatedSecondClass": 84,
+            "standing": 60,
+            "wheelchairSpaces": 0,
+            "bicycleSpaces": 0
+          }
+        }
+      ],
       "coupling": {
         "canCouple": true,
         "maxCoupledUnits": 3,
@@ -69,10 +123,10 @@
       "operator": "DB Regio",
       "serviceCategories": ["RB", "S"],
       "specifications": {
-        "length": 70,
-        "width": 2.82,
-        "height": 4.18,
-        "weight": 140,
+        "length": 69.9,
+        "width": 2.81,
+        "height": 4.21,
+        "weight": 112,
         "axles": 12,
         "bogieType": "Jacobs",
         "bogieSpacing": 16.5,
@@ -91,11 +145,52 @@
       },
       "capacity": {
         "seatedFirstClass": 0,
-        "seatedSecondClass": 220,
-        "standing": 180,
+        "seatedSecondClass": 200,
+        "standing": 170,
         "wheelchairSpaces": 2,
-        "bicycleSpaces": 8
+        "bicycleSpaces": 26
       },
+      "cars": [
+        {
+          "id": "A",
+          "class": "second",
+          "kind": "cab",
+          "lengthMeters": 23.3,
+          "capacity": {
+            "seatedFirstClass": 0,
+            "seatedSecondClass": 64,
+            "standing": 50,
+            "wheelchairSpaces": 0,
+            "bicycleSpaces": 0
+          }
+        },
+        {
+          "id": "B",
+          "class": "second",
+          "kind": "accessible",
+          "lengthMeters": 23.3,
+          "capacity": {
+            "seatedFirstClass": 0,
+            "seatedSecondClass": 72,
+            "standing": 70,
+            "wheelchairSpaces": 2,
+            "bicycleSpaces": 0
+          }
+        },
+        {
+          "id": "C",
+          "class": "second",
+          "kind": "bike",
+          "lengthMeters": 23.3,
+          "capacity": {
+            "seatedFirstClass": 0,
+            "seatedSecondClass": 64,
+            "standing": 50,
+            "wheelchairSpaces": 0,
+            "bicycleSpaces": 26
+          }
+        }
+      ],
       "coupling": {
         "canCouple": true,
         "maxCoupledUnits": 3,
@@ -118,6 +213,219 @@
         "toilets": 2,
         "bistro": false,
         "firstClass": false
+      }
+    },
+    {
+      "id": "BR1440",
+      "name": "Coradia Continental",
+      "manufacturer": "Alstom",
+      "country": "DE",
+      "operator": "DB Regio",
+      "serviceCategories": ["RB", "RE", "S"],
+      "specifications": {
+        "length": 73.3,
+        "width": 2.92,
+        "height": 4.28,
+        "weight": 145,
+        "axles": 16,
+        "bogieType": "Jacobs",
+        "bogieSpacing": 16.0,
+        "wheelDiameter": 850
+      },
+      "performance": {
+        "maxSpeed": 160,
+        "maxOperationalSpeed": 160,
+        "acceleration": 1.0,
+        "deceleration": 0.9,
+        "emergencyDeceleration": 1.3,
+        "powerOutput": 2000,
+        "tractionType": "electric",
+        "voltages": ["15kV AC"],
+        "adhesionCoefficient": 0.35
+      },
+      "capacity": {
+        "seatedFirstClass": 12,
+        "seatedSecondClass": 194,
+        "standing": 200,
+        "wheelchairSpaces": 2,
+        "bicycleSpaces": 24
+      },
+      "cars": [
+        {
+          "id": "A",
+          "class": "mixed",
+          "kind": "cab",
+          "lengthMeters": 18.3,
+          "capacity": {
+            "seatedFirstClass": 12,
+            "seatedSecondClass": 40,
+            "standing": 50,
+            "wheelchairSpaces": 1,
+            "bicycleSpaces": 0
+          }
+        },
+        {
+          "id": "B",
+          "class": "second",
+          "kind": "standard",
+          "lengthMeters": 18.3,
+          "capacity": {
+            "seatedFirstClass": 0,
+            "seatedSecondClass": 55,
+            "standing": 50,
+            "wheelchairSpaces": 0,
+            "bicycleSpaces": 0
+          }
+        },
+        {
+          "id": "C",
+          "class": "second",
+          "kind": "bike",
+          "lengthMeters": 18.4,
+          "capacity": {
+            "seatedFirstClass": 0,
+            "seatedSecondClass": 55,
+            "standing": 50,
+            "wheelchairSpaces": 1,
+            "bicycleSpaces": 24
+          }
+        },
+        {
+          "id": "D",
+          "class": "second",
+          "kind": "cab",
+          "lengthMeters": 18.3,
+          "capacity": {
+            "seatedFirstClass": 0,
+            "seatedSecondClass": 44,
+            "standing": 50,
+            "wheelchairSpaces": 0,
+            "bicycleSpaces": 0
+          }
+        }
+      ],
+      "coupling": {
+        "canCouple": true,
+        "maxCoupledUnits": 3,
+        "couplerType": "Scharfenberg",
+        "automaticCoupling": true
+      },
+      "appearance": {
+        "primaryColor": "#006F8F",
+        "secondaryColor": "#FFFFFF",
+        "accentColor": "#282828",
+        "livery": "DB-Regio-Standard",
+        "spriteId": "br1440"
+      },
+      "features": {
+        "airConditioning": true,
+        "wifi": true,
+        "powerOutlets": true,
+        "passengerInformation": "LCD",
+        "accessibility": "full",
+        "toilets": 2,
+        "bistro": false,
+        "firstClass": true
+      }
+    },
+    {
+      "id": "BR442",
+      "name": "Talent 2",
+      "manufacturer": "Bombardier",
+      "country": "DE",
+      "operator": "DB Regio",
+      "serviceCategories": ["RB", "RE", "S"],
+      "specifications": {
+        "length": 56.2,
+        "width": 2.925,
+        "height": 4.25,
+        "weight": 107,
+        "axles": 12,
+        "bogieType": "Jacobs",
+        "bogieSpacing": 15.5,
+        "wheelDiameter": 850
+      },
+      "performance": {
+        "maxSpeed": 160,
+        "maxOperationalSpeed": 160,
+        "acceleration": 1.1,
+        "deceleration": 0.9,
+        "emergencyDeceleration": 1.3,
+        "powerOutput": 2020,
+        "tractionType": "electric",
+        "voltages": ["15kV AC"],
+        "adhesionCoefficient": 0.35
+      },
+      "capacity": {
+        "seatedFirstClass": 8,
+        "seatedSecondClass": 170,
+        "standing": 160,
+        "wheelchairSpaces": 2,
+        "bicycleSpaces": 12
+      },
+      "cars": [
+        {
+          "id": "A",
+          "class": "mixed",
+          "kind": "cab",
+          "lengthMeters": 18.7,
+          "capacity": {
+            "seatedFirstClass": 8,
+            "seatedSecondClass": 60,
+            "standing": 60,
+            "wheelchairSpaces": 1,
+            "bicycleSpaces": 0
+          }
+        },
+        {
+          "id": "B",
+          "class": "second",
+          "kind": "accessible",
+          "lengthMeters": 18.8,
+          "capacity": {
+            "seatedFirstClass": 0,
+            "seatedSecondClass": 60,
+            "standing": 60,
+            "wheelchairSpaces": 1,
+            "bicycleSpaces": 0
+          }
+        },
+        {
+          "id": "C",
+          "class": "second",
+          "kind": "bike",
+          "lengthMeters": 18.7,
+          "capacity": {
+            "seatedFirstClass": 0,
+            "seatedSecondClass": 50,
+            "standing": 40,
+            "wheelchairSpaces": 0,
+            "bicycleSpaces": 12
+          }
+        }
+      ],
+      "coupling": {
+        "canCouple": true,
+        "maxCoupledUnits": 3,
+        "couplerType": "Scharfenberg",
+        "automaticCoupling": true
+      },
+      "appearance": {
+        "primaryColor": "#006F8F",
+        "secondaryColor": "#FFFFFF",
+        "accentColor": "#282828",
+        "livery": "DB-Regio-Standard",
+        "spriteId": "br442"
+      },
+      "features": {
+        "airConditioning": true,
+        "wifi": true,
+        "powerOutlets": true,
+        "passengerInformation": "LCD",
+        "accessibility": "full",
+        "toilets": 2,
+        "bistro": false,
+        "firstClass": true
       }
     },
     {

@@ -33,6 +33,7 @@ export type OperationalState =
   | 'running' // En route between stations
   | 'approaching' // Decelerating toward station
   | 'at_station' // Stopped at station
+  | 'turnaround' // Parked at station awaiting next assignment
   | 'terminated' // Service ended
 
 /** Position on the track network */
@@ -280,6 +281,10 @@ export interface TrainState {
   scheduledDeparture: Date
   /** Timetable entry ID backing this service */
   timetableEntryId: string
+  /** Stop node ID of the platform/stop position last used (for service chaining) */
+  lastStopNodeId: string | null
+  /** When this train becomes available for a new service (for service chaining) */
+  availableForServiceAt: Date | null
   /** Current position on track */
   trackPosition: TrackPosition
   /** Calculated world position for rendering */

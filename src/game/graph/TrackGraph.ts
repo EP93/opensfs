@@ -476,19 +476,22 @@ export class TrackGraph {
       if (orientation.preferredDirection === 'backward' && isForwardTraversal) cost += 5000
     }
 
-    // Discourage short crossover-like segments at switches (reduces random side-switching).
+    // Strongly discourage crossover-like segments at switches (reduces random side-switching).
+    // These are common sources of unrealistic “Z” paths on double-track mainlines.
     const junctionDegreesHigh = from.degree >= 3 && to.degree >= 3
     const isSwitchToSwitch = from.kind === 'switch' && to.kind === 'switch'
-    const looksLikeCrossover = junctionDegreesHigh && link.length < 250
-    if (looksLikeCrossover) cost += 2000
 
-    // Additional crossover penalty for longer switch-to-switch connectors (common in double-track crossovers).
-    // Without this, A* can still pick “Z” crossovers if they are longer than the short-link heuristic.
-    const looksLikeMediumCrossover = junctionDegreesHigh && link.length < 900
-    if (looksLikeMediumCrossover) cost += 3000
+    const looksLikeShortCrossover = junctionDegreesHigh && link.length < 300
+    const looksLikeCrossover = junctionDegreesHigh && link.length < 1500
+    if (looksLikeShortCrossover) {
+      cost += 40_000
+    } else if (looksLikeCrossover) {
+      cost += 20_000
+    }
 
-    const looksLikeLongCrossover = junctionDegreesHigh && isSwitchToSwitch && link.length < 900
-    if (looksLikeLongCrossover) cost += 2000
+    if (isSwitchToSwitch && link.length < 1500) {
+      cost += 10_000
+    }
 
     return cost
   }
@@ -513,7 +516,7 @@ export class TrackGraph {
 
   buildPathForPlannedStops(
     stops: PlannedStopConstraint[],
-    destinationStationId?: string
+    _destinationStationId?: string
   ): { path: PathResult; stopOffsets: number[]; chosenStopNodeIds: string[] } {
     const effectiveStops = stops
       .map((s) => ({
@@ -530,23 +533,24 @@ export class TrackGraph {
       }
     }
 
-    const destinationId =
-      destinationStationId?.trim() && destinationStationId.trim().length > 0
-        ? destinationStationId.trim()
-        : effectiveStops[effectiveStops.length - 1]?.stationId
-
     const attempt = (opts: {
       applyPlatformFilter: boolean
       applySideFilter: boolean
     }): { path: PathResult; stopOffsets: number[]; chosenStopNodeIds: string[] } | null => {
-      const maxCandidatesPerStop = 6
-      const stopCandidates = effectiveStops.map((stop) =>
-        this.getStationStopCandidates(stop.stationId, {
-          platformHint: opts.applyPlatformFilter ? stop.platform : null,
-          destinationStationId: opts.applySideFilter ? (destinationId ?? null) : null,
-          maxCandidates: maxCandidatesPerStop,
+      const stopCandidates = effectiveStops.map((stop, index) => {
+        const platformHint = opts.applyPlatformFilter ? stop.platform : null
+        const maxCandidates = platformHint ? 6 : 10
+        const nextStationId =
+          opts.applySideFilter && index < effectiveStops.length - 1
+            ? (effectiveStops[index + 1]?.stationId ?? null)
+            : null
+
+        return this.getStationStopCandidates(stop.stationId, {
+          platformHint,
+          destinationStationId: nextStationId,
+          maxCandidates,
         })
-      )
+      })
 
       if (stopCandidates.some((c) => c.length === 0)) return null
 
@@ -789,6 +793,19 @@ export class TrackGraph {
     }
   }
 
+  isCrossoverLikeTraversal(fromNodeId: string, toNodeId: string, link: TrackLinkData): boolean {
+    if (link.isConnector) return false
+    const from = this.graph.getNode(fromNodeId)?.data
+    const to = this.graph.getNode(toNodeId)?.data
+    if (!from || !to) return false
+
+    const junctionDegreesHigh = from.degree >= 3 && to.degree >= 3
+    if (!junctionDegreesHigh) return false
+    if (link.length >= 1500) return false
+
+    return true
+  }
+
   // Private helper methods
 
   private interpolatePosition(
@@ -1000,6 +1017,18 @@ export class TrackGraph {
       )
       if (rightSide.length > 0) candidates = rightSide
     }
+
+    // Prefer candidates with known platform refs (stable UI + less random platform hopping).
+    const center = this.stationCenterByStationId.get(stationId)
+    candidates = candidates.slice().sort((a, b) => {
+      const ap = a.platformRef ? 1 : 0
+      const bp = b.platformRef ? 1 : 0
+      if (ap !== bp) return bp - ap
+      if (!center) return 0
+      const da = Math.hypot(a.world[0] - center[0], a.world[1] - center[1])
+      const db = Math.hypot(b.world[0] - center[0], b.world[1] - center[1])
+      return da - db
+    })
 
     const limited = candidates.slice(0, Math.max(1, opts.maxCandidates))
     return limited.map((c) => c.nodeId)

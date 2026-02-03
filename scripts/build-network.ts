@@ -77,7 +77,10 @@ function isStopPosition(tags: Record<string, string> | undefined): boolean {
 
 function isStationRailway(tags: Record<string, string> | undefined): boolean {
   const railway = tags?.['railway']
-  return railway === 'station' || railway === 'halt' || railway === 'stop'
+  if (railway === 'station' || railway === 'halt') return true
+  // Keep railway=stop only for non-platform nodes; platform stop_positions are not stations.
+  if (railway === 'stop') return !isStopPosition(tags)
+  return false
 }
 
 function getNodeKind(tags: Record<string, string> | undefined): NetworkNodeKind {
@@ -101,6 +104,47 @@ function getDisplayName(tags: Record<string, string> | undefined): string | null
 function getUicRef(tags: Record<string, string> | undefined): string | null {
   const uic = tags?.['uic_ref']
   return typeof uic === 'string' && uic.trim().length > 0 ? uic.trim() : null
+}
+
+function getIfopt(tags: Record<string, string> | undefined): string | null {
+  const ifopt = tags?.['ref:IFOPT']
+  return typeof ifopt === 'string' && ifopt.trim().length > 0 ? ifopt.trim() : null
+}
+
+function cleanString(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed : null
+}
+
+function extractPlatformRef(tags: Record<string, string> | undefined): string | null {
+  const direct =
+    cleanString(tags?.['local_ref']) ??
+    cleanString(tags?.['ref']) ??
+    cleanString(tags?.['ref:IFOPT:description'])
+  if (direct) return direct
+
+  const description = cleanString(tags?.['description'])
+  if (!description) return null
+
+  const match = description.match(/(?:Gleis|Platform)\s*([0-9]+[a-zA-Z]?)/i)
+  return match?.[1] ? match[1] : null
+}
+
+function normalizePlatform(value: string | null): string | null {
+  const cleaned = value ? cleanString(value) : null
+  if (!cleaned) return null
+
+  const gleisMatch = cleaned.match(/(?:gleis|platform)\s*([0-9]+[a-zA-Z]?)/i)
+  if (gleisMatch?.[1]) return gleisMatch[1].toUpperCase()
+
+  const bare = cleaned.match(/^([0-9]+[a-zA-Z]?)$/)
+  if (bare?.[1]) return bare[1].toUpperCase()
+
+  const anyDigits = cleaned.match(/([0-9]+[a-zA-Z]?)/)
+  if (anyDigits?.[1]) return anyDigits[1].toUpperCase()
+
+  return cleaned.toUpperCase()
 }
 
 function gridKey(lon: number, lat: number, cell: number): string {
@@ -378,30 +422,57 @@ async function buildNetwork(regionKey: string): Promise<NetworkData> {
     const center = { lon: station.lon, lat: station.lat }
     const stationName = getDisplayName(selfTags) ?? station.name
     const stationUic = getUicRef(selfTags)
+    const stationIfopt = getIfopt(selfTags)
 
     const candidateStops = selfIsStop
       ? [{ osmNodeId: stationOsmId, distanceM: 0 }]
       : findWithinRadius(stopGrid, stopGridCell, center, stopRadiusM)
 
-    // Prefer stop_positions/stop nodes that match station identity (name and/or UIC).
-    const strongMatches = candidateStops.filter((c) => {
-      const stopTags = nodeTagsById.get(c.osmNodeId)
-      const stopName = getDisplayName(stopTags)
-      const stopUic = getUicRef(stopTags)
-      if (stationUic && stopUic && stopUic === stationUic) return true
-      if (stopName && stationName && stopName === stationName) return true
-      return false
-    })
+    const ranked = candidateStops
+      .map((c) => {
+        const stopTags = nodeTagsById.get(c.osmNodeId)
+        const stopName = getDisplayName(stopTags)
+        const stopUic = getUicRef(stopTags)
+        const stopIfopt = getIfopt(stopTags)
+        const onTrack = trackNodeIds.has(c.osmNodeId)
+        const isIfoptPrefixMatch =
+          stationIfopt && stopIfopt ? stopIfopt.startsWith(stationIfopt) : false
+        const isUicMatch = stationUic && stopUic ? stopUic === stationUic : false
+        const isNameMatch = stopName && stationName ? stopName === stationName : false
 
-    const base = strongMatches.length > 0 ? strongMatches : candidateStops
+        // Lower tier is better.
+        const tier = isIfoptPrefixMatch ? 0 : isUicMatch ? 1 : isNameMatch ? 2 : 3
 
-    // Strongly prefer stops that are also part of a railway way node (avoids synthetic connectors).
-    const onTrack = base.filter((c) => trackNodeIds.has(c.osmNodeId))
-    const rankedBase = onTrack.length > 0 ? onTrack : base
+        const platformKey = normalizePlatform(extractPlatformRef(stopTags))
 
-    const ranked = rankedBase.sort((a, b) => a.distanceM - b.distanceM)
+        return {
+          ...c,
+          tier,
+          onTrack,
+          platformKey,
+        }
+      })
+      .sort((a, b) => {
+        if (a.tier !== b.tier) return a.tier - b.tier
+        if (a.onTrack !== b.onTrack) return a.onTrack ? -1 : 1
+        return a.distanceM - b.distanceM
+      })
 
-    const stopNodeIds = ranked.slice(0, 8).map((c) => nodeId(c.osmNodeId))
+    const maxStopTargets = 24
+    const maxPerPlatform = 2
+    const perPlatform = new Map<string, number>()
+    const stopNodeIds: string[] = []
+
+    for (const c of ranked) {
+      if (stopNodeIds.length >= maxStopTargets) break
+      const platform = c.platformKey
+      if (platform) {
+        const count = perPlatform.get(platform) ?? 0
+        if (count >= maxPerPlatform) continue
+        perPlatform.set(platform, count + 1)
+      }
+      stopNodeIds.push(nodeId(c.osmNodeId))
+    }
 
     if (stopNodeIds.length > 0) {
       station.stopNodeIds = stopNodeIds

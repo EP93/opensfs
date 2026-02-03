@@ -1,16 +1,15 @@
 /**
- * Line definitions for the Rheintalbahn corridor.
- * Based on real Deutsche Bahn timetable data for RE 7 and RB 27 services.
+ * Line definitions for the Rheintal corridor (Basel–Freiburg–Offenburg–Karlsruhe).
+ * Timings are approximate and intended for gameplay.
  *
- * Station IDs are from the freiburg region GeoJSON data.
+ * Station IDs reference station nodes (not platform stop nodes).
  */
 
 import type { LineDefinition } from '@/types/timetable'
 
 /**
- * RE 7 Rheintalbahn - Express service
- * Offenburg - Freiburg - Basel
- * Stops at major stations only
+ * RE 7 Rheintalbahn - Express service (simplified)
+ * Basel Bad Bf - Freiburg - Offenburg - Baden-Baden - Karlsruhe
  */
 export const RE7_RHEINTALBAHN: LineDefinition = {
   id: 'RE7',
@@ -20,42 +19,36 @@ export const RE7_RHEINTALBAHN: LineDefinition = {
   defaultUnits: 1,
   color: 0xec0016, // DB Red
   route: [
-    'station-node/21386947', // Offenburg
-    'station-node/3123473867', // Lahr (Schwarzwald)
-    'station-node/21769922', // Emmendingen
+    'station-node/3080746010', // Basel Badischer Bahnhof
     'station-node/21769883', // Freiburg (Breisgau) Hauptbahnhof
-    'station-node/339755956', // Bad Krozingen
-    'station-node/27358194', // Müllheim im Markgräflerland
-    'station-node/2437251950', // Weil am Rhein
-    'station-node/3080746011', // Basel SBB (SBB)
+    'station-node/2931428598', // Offenburg
+    'station-node/2931245709', // Baden-Baden
+    'station-node/2574283615', // Karlsruhe Hauptbahnhof
   ],
   stationNames: [
-    'Offenburg',
-    'Lahr (Schwarzwald)',
-    'Emmendingen',
+    'Basel Bad Bf',
     'Freiburg (Brsg) Hbf',
-    'Bad Krozingen',
-    'Müllheim (Baden)',
-    'Weil am Rhein',
-    'Basel SBB',
+    'Offenburg',
+    'Baden-Baden',
+    'Karlsruhe Hbf',
   ],
   // Journey times in minutes from origin
-  journeyTimes: [0, 13, 24, 40, 52, 64, 75, 85],
+  journeyTimes: [0, 50, 85, 110, 140],
   // Dwell times at each station in minutes
-  dwellTimes: [0, 1, 1, 2, 1, 1, 1, 0],
+  dwellTimes: [0, 2, 2, 1, 0],
   taktTemplate: {
-    departureMinute: 38, // xx:38 departure pattern
+    departureMinute: 20, // xx:20 departure pattern
     intervalMinutes: 60, // Hourly
-    firstHour: 5, // First train at 05:38
-    lastHour: 22, // Last train at 22:38
+    firstHour: 5,
+    lastHour: 22,
     operatingDays: [1, 2, 3, 4, 5, 6, 0], // All week
   },
   bidirectional: true,
 }
 
 /**
- * RB 27 Rheintal Süd - Regional service (simplified route)
- * Freiburg - Bad Krozingen - Müllheim - Basel
+ * RB 27 Rheintal Süd - Regional service (all stops)
+ * Basel Bad Bf - Freiburg
  */
 export const RB27_RHEINTAL_SUD: LineDefinition = {
   id: 'RB27',
@@ -65,41 +58,41 @@ export const RB27_RHEINTAL_SUD: LineDefinition = {
   defaultUnits: 1,
   color: 0x006f8f, // DB Petrol
   route: [
-    'station-node/21769883', // Freiburg (Breisgau) Hauptbahnhof
-    'station-node/27339628', // Freiburg-Sankt Georgen
-    'station-node/875971244', // Schallstadt
-    'station-node/339755956', // Bad Krozingen
-    'station-node/27358206', // Heitersheim
-    'station-node/310683068', // Buggingen
-    'station-node/27358194', // Müllheim im Markgräflerland
-    'station-node/2870459336', // Auggen
-    'station-node/2428962411', // Schliengen
-    'station-node/232638811', // Bad Bellingen
-    'station-node/317807461', // Efringen-Kirchen
-    'station-node/1109008480', // Eimeldingen
+    'station-node/3080746010', // Basel Badischer Bahnhof
+    'station-node/2691597727', // Weil am Rhein
     'station-node/2696207577', // Haltingen
-    'station-node/2437251950', // Weil am Rhein
-    'station-node/750741463', // Basel Badischer Bahnhof
+    'station-node/2696241802', // Eimeldingen
+    'station-node/3248040312', // Efringen-Kirchen
+    'station-node/2429012748', // Bad Bellingen
+    'station-node/3260353073', // Schliengen
+    'station-node/2870459336', // Auggen
+    'station-node/2870447635', // Müllheim im Markgräflerland
+    'station-node/2870400675', // Buggingen
+    'station-node/27358206', // Heitersheim
+    'station-node/1584720252', // Bad Krozingen
+    'station-node/2427852431', // Schallstadt
+    'station-node/2870258631', // Freiburg-Sankt Georgen
+    'station-node/21769883', // Freiburg (Breisgau) Hauptbahnhof
   ],
   stationNames: [
-    'Freiburg (Brsg) Hbf',
-    'Freiburg St. Georgen',
-    'Schallstadt',
-    'Bad Krozingen',
-    'Heitersheim',
-    'Buggingen',
-    'Müllheim (Baden)',
-    'Auggen',
-    'Schliengen',
-    'Bad Bellingen',
-    'Efringen-Kirchen',
-    'Eimeldingen',
-    'Haltingen',
-    'Weil am Rhein',
     'Basel Bad Bf',
+    'Weil am Rhein',
+    'Haltingen',
+    'Eimeldingen',
+    'Efringen-Kirchen',
+    'Bad Bellingen',
+    'Schliengen',
+    'Auggen',
+    'Müllheim (Baden)',
+    'Buggingen',
+    'Heitersheim',
+    'Bad Krozingen',
+    'Schallstadt',
+    'Freiburg St. Georgen',
+    'Freiburg (Brsg) Hbf',
   ],
-  // Journey times in minutes from Freiburg
-  journeyTimes: [0, 5, 10, 16, 22, 26, 31, 35, 39, 43, 47, 50, 53, 56, 63],
+  // Journey times in minutes from Basel Bad Bf (reverse of the old Freiburg-origin timing)
+  journeyTimes: [0, 7, 10, 13, 16, 20, 24, 28, 32, 37, 41, 47, 53, 58, 63],
   // Dwell times at each station
   dwellTimes: [0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0],
   taktTemplate: {
@@ -125,16 +118,16 @@ export const RB26_RHEINTAL_NORD: LineDefinition = {
   color: 0x006f8f,
   route: [
     'station-node/21769883', // Freiburg (Breisgau) Hauptbahnhof
-    'station-node/73280120', // Gundelfingen (Breisgau)
-    'station-node/21770174', // Denzlingen
-    'station-node/21769922', // Emmendingen
-    'station-node/21769951', // Riegel-Malterdingen
+    'station-node/3623217824', // Gundelfingen (Breisgau)
+    'station-node/2870145095', // Denzlingen
+    'station-node/2870063084', // Emmendingen
+    'station-node/2858010890', // Riegel-Malterdingen
     'station-node/2857866102', // Herbolzheim (Breisgau)
-    'station-node/312426117', // Kenzingen
-    'station-node/299230210', // Orschweier
+    'station-node/2410872059', // Kenzingen
+    'station-node/6535358086', // Orschweier
     'station-node/3123473867', // Lahr (Schwarzwald)
     'station-node/1637496016', // Friesenheim (Baden)
-    'station-node/21386947', // Offenburg
+    'station-node/2931428598', // Offenburg
   ],
   stationNames: [
     'Freiburg (Brsg) Hbf',
@@ -161,11 +154,55 @@ export const RB26_RHEINTAL_NORD: LineDefinition = {
   bidirectional: true,
 }
 
+/**
+ * RB 25 Rheintal Nord - Regional service north of Offenburg (simplified)
+ * Offenburg - Baden-Baden - Karlsruhe (all stops)
+ */
+export const RB25_RHEINTAL_NORD: LineDefinition = {
+  id: 'RB25',
+  name: 'RB 25 Rheintal Nord',
+  category: 'RB',
+  defaultTypeId: 'BR463',
+  defaultUnits: 1,
+  color: 0x006f8f,
+  route: [
+    'station-node/2931428598', // Offenburg
+    'station-node/2572551585', // Appenweier
+    'station-node/3780858667', // Renchen
+    'station-node/2572552393', // Achern
+    'station-node/21386662', // Bühl (Baden)
+    'station-node/2931245709', // Baden-Baden
+    'station-node/21322676', // Rastatt
+    'station-node/2574283615', // Karlsruhe Hauptbahnhof
+  ],
+  stationNames: [
+    'Offenburg',
+    'Appenweier',
+    'Renchen',
+    'Achern',
+    'Bühl (Baden)',
+    'Baden-Baden',
+    'Rastatt',
+    'Karlsruhe Hbf',
+  ],
+  journeyTimes: [0, 6, 12, 20, 28, 40, 50, 62],
+  dwellTimes: [0, 1, 1, 1, 1, 1, 1, 0],
+  taktTemplate: {
+    departureMinute: 20,
+    intervalMinutes: 60,
+    firstHour: 5,
+    lastHour: 23,
+    operatingDays: [1, 2, 3, 4, 5, 6, 0],
+  },
+  bidirectional: true,
+}
+
 /** All available line definitions */
 export const LINE_DEFINITIONS: LineDefinition[] = [
   RE7_RHEINTALBAHN,
   RB27_RHEINTAL_SUD,
   RB26_RHEINTAL_NORD,
+  RB25_RHEINTAL_NORD,
 ]
 
 /** Line definitions by ID */
