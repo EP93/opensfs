@@ -2,7 +2,7 @@
  * TileSystem - Renders OpenStreetMap raster tiles as background
  */
 
-import { Assets, Container, Sprite, type Texture } from 'pixi.js'
+import { Container, Sprite, Texture, type Texture as TextureType } from 'pixi.js'
 import {
   calculateTileZoom,
   getTileBounds,
@@ -20,13 +20,17 @@ import type { Viewport } from '@/types/game'
  * upstream tile servers. Configure `VITE_TILE_URL_TEMPLATE` to override.
  */
 const TILE_URL_TEMPLATE =
-  (import.meta.env.VITE_TILE_URL_TEMPLATE as string | undefined) ?? '/osm-tiles/{z}/{x}/{y}.png'
+  (import.meta.env.VITE_TILE_URL_TEMPLATE as string | undefined) ??
+  (import.meta.env.DEV
+    ? '/osm-tiles/{z}/{x}/{y}.png'
+    : 'https://tile.openstreetmap.org/{z}/{x}/{y}.png')
 
 const DEFAULT_MAX_TILE_ZOOM = 17
-const DEFAULT_REQUESTS_PER_SECOND = 2
-const DEFAULT_MAX_CONCURRENT_REQUESTS = 2
+const DEFAULT_REQUESTS_PER_SECOND = import.meta.env.DEV ? 6 : 2
+const DEFAULT_MAX_CONCURRENT_REQUESTS = import.meta.env.DEV ? 6 : 2
 const DEFAULT_FAST_PAN_PX_PER_SEC = 2500
 const DEFAULT_FAST_PAN_ZOOM_BIAS = -2
+const DEFAULT_TILE_CACHE_MAX_TILES = import.meta.env.DEV ? 300 : 200
 
 const MAX_TILE_ZOOM = clampInt(
   Number(import.meta.env.VITE_TILE_MAX_ZOOM ?? DEFAULT_MAX_TILE_ZOOM),
@@ -42,6 +46,11 @@ const MAX_CONCURRENT_REQUESTS = clampInt(
   Number(import.meta.env.VITE_TILE_MAX_CONCURRENT_REQUESTS ?? DEFAULT_MAX_CONCURRENT_REQUESTS),
   1,
   12
+)
+const TILE_CACHE_MAX_TILES = clampInt(
+  Number(import.meta.env['VITE_TILE_CACHE_MAX_TILES'] ?? DEFAULT_TILE_CACHE_MAX_TILES),
+  50,
+  5000
 )
 const FAST_PAN_PX_PER_SEC = clampInt(
   Number(import.meta.env.VITE_TILE_FAST_PAN_PX_PER_SEC ?? DEFAULT_FAST_PAN_PX_PER_SEC),
@@ -59,8 +68,15 @@ const RESCAN_INTERVAL_MS = 250
 /** Tile cache entry */
 interface TileCacheEntry {
   src: string
-  texture: Texture
+  texture: TextureType
   lastUsed: number
+}
+
+interface TileRequest {
+  key: string
+  tile: TileCoord
+  priority: number
+  enqueuedAtMs: number
 }
 
 /** Generate tile cache key */
@@ -73,11 +89,43 @@ function clampInt(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, Math.trunc(value)))
 }
 
+function loadImage(url: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.crossOrigin = 'anonymous'
+    img.decoding = 'async'
+
+    const cleanup = () => {
+      img.onload = null
+      img.onerror = null
+    }
+
+    img.onload = () => {
+      cleanup()
+      resolve(img)
+    }
+    img.onerror = (event) => {
+      cleanup()
+      reject(event)
+    }
+
+    img.src = url
+  })
+}
+
+async function loadTextureFromUrl(url: string): Promise<TextureType> {
+  const img = await loadImage(url)
+  // Skip Pixi's global cache for these transient tile textures; we manage a local cache.
+  return Texture.from(img, true)
+}
+
 export class TileSystem {
   private container: Container
   private tileCache = new Map<string, TileCacheEntry>()
-  private loadingTiles = new Set<string>()
-  private pendingRequests: Array<() => void> = []
+  private failedTilesUntil = new Map<string, number>()
+  private pending: TileRequest[] = []
+  private queuedTiles = new Set<string>()
+  private inFlightTiles = new Set<string>()
   private activeRequests = 0
   private tileSprites = new Map<string, Sprite>()
   private lastViewport: Viewport | null = null
@@ -89,6 +137,8 @@ export class TileSystem {
   private lastTokenRefillMs = performance.now()
   private tileZoomHoldUntilMs = 0
   private tileZoomOverride: number | null = null
+  private wantedTiles = new Set<string>()
+  private lastCacheCleanupMs = 0
 
   constructor() {
     this.container = new Container()
@@ -116,6 +166,10 @@ export class TileSystem {
       !this.viewportChanged(viewport) &&
       now - this.lastScanMs < RESCAN_INTERVAL_MS
     ) {
+      if (now - this.lastCacheCleanupMs > 1000) {
+        this.cleanupCache()
+        this.lastCacheCleanupMs = now
+      }
       this.processQueue(now)
       return
     }
@@ -135,6 +189,7 @@ export class TileSystem {
     // If zoom level changed, clear old sprites
     if (currentZoom !== this.lastTileZoom) {
       this.clearSprites()
+      this.clearPending()
       this.lastTileZoom = currentZoom
     }
 
@@ -147,17 +202,21 @@ export class TileSystem {
       visibleKeys.add(key)
 
       // Position the tile sprite
-      this.updateTileSprite(tile, viewport)
+      const sprite = this.updateTileSprite(tile, viewport)
 
       // Load tile if not in cache
-      if (!this.tileCache.has(key) && !this.loadingTiles.has(key)) {
+      if (!this.tileCache.has(key) && !this.inFlightTiles.has(key)) {
         if (suppressNewRequests) {
           // Moving too fast: wait until the camera slows down before requesting more tiles.
           continue
         }
-        this.loadTile(tile, now)
+        const priority = this.spritePriority(sprite, viewport)
+        this.enqueueOrUpdate(tile, key, priority, now)
       }
     }
+
+    this.wantedTiles = visibleKeys
+    this.syncPendingToWanted(visibleKeys)
 
     // Remove sprites that are no longer visible
     for (const [key, sprite] of this.tileSprites) {
@@ -169,7 +228,10 @@ export class TileSystem {
     }
 
     // Clean up old cache entries periodically
-    this.cleanupCache()
+    if (now - this.lastCacheCleanupMs > 1000) {
+      this.cleanupCache()
+      this.lastCacheCleanupMs = now
+    }
 
     this.processQueue(now)
   }
@@ -213,7 +275,7 @@ export class TileSystem {
     return { tileZoom: desired, suppressNewRequests }
   }
 
-  private updateTileSprite(tile: TileCoord, viewport: Viewport): void {
+  private updateTileSprite(tile: TileCoord, viewport: Viewport): Sprite {
     const key = tileKey(tile.z, tile.x, tile.y)
     const cached = this.tileCache.get(key)
 
@@ -243,28 +305,74 @@ export class TileSystem {
     sprite.y = screenNW[1]
     sprite.width = screenSE[0] - screenNW[0]
     sprite.height = screenSE[1] - screenNW[1]
+
+    return sprite
   }
 
-  private async loadTile(tile: TileCoord, now: number): Promise<void> {
-    const key = tileKey(tile.z, tile.x, tile.y)
+  private spritePriority(sprite: Sprite, viewport: Viewport): number {
+    const cx = sprite.x + sprite.width / 2
+    const cy = sprite.y + sprite.height / 2
+    return Math.hypot(cx - viewport.width / 2, cy - viewport.height / 2)
+  }
 
-    if (this.loadingTiles.has(key) || this.tileCache.has(key)) {
+  private enqueueOrUpdate(tile: TileCoord, key: string, priority: number, now: number): void {
+    if (this.tileCache.has(key) || this.inFlightTiles.has(key)) return
+
+    const failedUntil = this.failedTilesUntil.get(key)
+    if (failedUntil && now < failedUntil) return
+
+    const existing = this.pending.find((r) => r.key === key)
+    if (existing) {
+      existing.priority = priority
       return
     }
 
-    this.loadingTiles.add(key)
+    this.pending.push({ key, tile, priority, enqueuedAtMs: now })
+    this.queuedTiles.add(key)
+    this.sortPending()
+  }
 
-    // Queue the request
-    const loadFn = async () => {
+  private sortPending(): void {
+    if (this.pending.length <= 1) return
+    this.pending.sort((a, b) => {
+      const p = a.priority - b.priority
+      if (p !== 0) return p
+      return a.enqueuedAtMs - b.enqueuedAtMs
+    })
+  }
+
+  private syncPendingToWanted(wanted: Set<string>): void {
+    if (this.pending.length === 0) return
+    const next: TileRequest[] = []
+    for (const req of this.pending) {
+      if (wanted.has(req.key)) {
+        next.push(req)
+      } else {
+        this.queuedTiles.delete(req.key)
+      }
+    }
+    this.pending = next
+    this.sortPending()
+  }
+
+  private clearPending(): void {
+    this.pending = []
+    this.queuedTiles.clear()
+  }
+
+  private startTileRequest(req: TileRequest, now: number): void {
+    const { tile, key } = req
+
+    this.activeRequests++
+    this.inFlightTiles.add(key)
+
+    void (async () => {
       try {
         const url = TILE_URL_TEMPLATE.replace('{z}', String(tile.z))
           .replace('{x}', String(tile.x))
           .replace('{y}', String(tile.y))
 
-        const texture = await Assets.load<Texture>({
-          src: url,
-          parser: 'loadTextures',
-        })
+        const texture = await loadTextureFromUrl(url)
 
         this.tileCache.set(key, {
           src: url,
@@ -272,38 +380,34 @@ export class TileSystem {
           lastUsed: Date.now(),
         })
 
-        // Update sprite if it exists
         const sprite = this.tileSprites.get(key)
-        if (sprite && this.lastViewport) {
+        if (sprite && this.wantedTiles.has(key)) {
           sprite.texture = texture
           this.onDirty?.()
         }
       } catch (error) {
-        // Silently fail - tile may not be available
         console.debug(`Failed to load tile ${key}:`, error)
+        this.failedTilesUntil.set(key, now + 15000)
       } finally {
-        this.loadingTiles.delete(key)
+        this.inFlightTiles.delete(key)
         this.activeRequests--
         this.processQueue()
       }
-    }
-
-    this.pendingRequests.push(() => void loadFn())
-    this.processQueue(now)
+    })()
   }
 
   private processQueue(now: number = performance.now()): void {
     this.refillTokens(now)
     while (
-      this.pendingRequests.length > 0 &&
+      this.pending.length > 0 &&
       this.activeRequests < MAX_CONCURRENT_REQUESTS &&
       this.requestTokens >= 1
     ) {
-      const next = this.pendingRequests.shift()
-      if (!next) continue
+      const nextReq = this.pending.shift()
+      if (!nextReq) continue
+      this.queuedTiles.delete(nextReq.key)
       this.requestTokens -= 1
-      this.activeRequests++
-      next()
+      this.startTileRequest(nextReq, now)
     }
   }
 
@@ -318,27 +422,16 @@ export class TileSystem {
   }
 
   private cleanupCache(): void {
-    const maxCacheSize = 200
-    const maxAge = 60000 // 1 minute
+    if (this.tileCache.size <= TILE_CACHE_MAX_TILES) return
 
-    if (this.tileCache.size <= maxCacheSize) return
-
-    const now = Date.now()
     const entries = [...this.tileCache.entries()]
-
-    // Sort by last used time
     entries.sort((a, b) => a[1].lastUsed - b[1].lastUsed)
 
-    // Remove old entries until we're under the limit
     for (const [key, entry] of entries) {
-      if (this.tileCache.size <= maxCacheSize / 2) break
-      if (now - entry.lastUsed > maxAge) {
-        // Don't destroy textures that are still in use
-        if (!this.tileSprites.has(key)) {
-          void Assets.unload(entry.src)
-          this.tileCache.delete(key)
-        }
-      }
+      if (this.tileCache.size <= TILE_CACHE_MAX_TILES) break
+      if (this.tileSprites.has(key)) continue
+      entry.texture.destroy(true)
+      this.tileCache.delete(key)
     }
   }
 
@@ -383,10 +476,12 @@ export class TileSystem {
   destroy(): void {
     this.onDirty = null
     this.clearSprites()
+    this.clearPending()
     for (const entry of this.tileCache.values()) {
-      void Assets.unload(entry.src)
+      entry.texture.destroy(true)
     }
     this.tileCache.clear()
+    this.failedTilesUntil.clear()
     this.container.destroy()
   }
 }

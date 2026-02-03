@@ -82,9 +82,11 @@ bun run preview
 - `bun run check` — Biome lint + formatting checks
 - `bun run check:fix` — auto-fix lint/format issues
 - `bun run build` — typecheck (`tsc -b`) and build bundle
-- `VITE_TILE_URL_TEMPLATE` — optional tile URL template override (defaults to `/osm-tiles/{z}/{x}/{y}.png`)
-- `VITE_TILE_REQUESTS_PER_SECOND` — tile request throttle (default `2`, to avoid spamming upstream providers)
+- `VITE_TILE_URL_TEMPLATE` — optional tile URL template override (defaults to `/osm-tiles/{z}/{x}/{y}.png` in dev, `https://tile.openstreetmap.org/{z}/{x}/{y}.png` otherwise)
+- `VITE_TILE_REQUESTS_PER_SECOND` — tile request throttle (default `6` in dev, `2` otherwise)
+- `VITE_TILE_MAX_CONCURRENT_REQUESTS` — max in-flight tile requests (default `6` in dev, `2` otherwise)
 - `VITE_TILE_MAX_ZOOM` — cap tile zoom level (default `17`)
+- `VITE_TILE_CACHE_MAX_TILES` — max in-memory tile textures before LRU eviction (default `200`; `300` in dev)
 
 ### Data pipeline commands (OpenStreetMap)
 
