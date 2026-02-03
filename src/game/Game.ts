@@ -99,7 +99,7 @@ export class Game {
 
     // Initialize train systems
     this.trackGraph = new TrackGraph()
-    this.trackReservationSystem = new TrackReservationSystem()
+    this.trackReservationSystem = new TrackReservationSystem(this.trackGraph)
     this.signalSystem = new SignalSystem(this.trackReservationSystem)
     this.trainRegistry = new TrainRegistry(trainTypeRegistry)
     this.timetableSystem = new TimetableSystem(this.trackGraph, this.trainRegistry)
