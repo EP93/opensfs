@@ -44,8 +44,8 @@ export class SignalSystem {
     if (!blocks || blocks.length === 0) return 'PROCEED'
 
     for (const blockId of blocks) {
-      const owner = this.reservationSystem.getReservedBy(blockId)
-      if (owner && owner !== viewerTrainId) {
+      const owner = this.reservationSystem.getAnyBlockStopOwner(blockId, viewerTrainId)
+      if (owner) {
         return 'STOP'
       }
     }

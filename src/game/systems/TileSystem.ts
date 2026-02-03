@@ -4,6 +4,7 @@
 
 import { Assets, Container, Sprite, type Texture } from 'pixi.js'
 import {
+  calculateTileZoom,
   getTileBounds,
   getVisibleTiles,
   lonLatToMercator,
@@ -12,11 +13,48 @@ import {
 } from '@/game/utils/geo'
 import type { Viewport } from '@/types/game'
 
-/** OSM tile server URL pattern */
-const TILE_URL_TEMPLATE = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'
+/**
+ * Tile URL pattern.
+ *
+ * Default is a same-origin proxy endpoint (`/osm-tiles/...`) to avoid browser CORS issues with
+ * upstream tile servers. Configure `VITE_TILE_URL_TEMPLATE` to override.
+ */
+const TILE_URL_TEMPLATE =
+  (import.meta.env.VITE_TILE_URL_TEMPLATE as string | undefined) ?? '/osm-tiles/{z}/{x}/{y}.png'
 
-/** Maximum concurrent tile requests */
-const MAX_CONCURRENT_REQUESTS = 6
+const DEFAULT_MAX_TILE_ZOOM = 17
+const DEFAULT_REQUESTS_PER_SECOND = 2
+const DEFAULT_MAX_CONCURRENT_REQUESTS = 2
+const DEFAULT_FAST_PAN_PX_PER_SEC = 2500
+const DEFAULT_FAST_PAN_ZOOM_BIAS = -2
+
+const MAX_TILE_ZOOM = clampInt(
+  Number(import.meta.env.VITE_TILE_MAX_ZOOM ?? DEFAULT_MAX_TILE_ZOOM),
+  0,
+  19
+)
+const REQUESTS_PER_SECOND = clampInt(
+  Number(import.meta.env.VITE_TILE_REQUESTS_PER_SECOND ?? DEFAULT_REQUESTS_PER_SECOND),
+  1,
+  60
+)
+const MAX_CONCURRENT_REQUESTS = clampInt(
+  Number(import.meta.env.VITE_TILE_MAX_CONCURRENT_REQUESTS ?? DEFAULT_MAX_CONCURRENT_REQUESTS),
+  1,
+  12
+)
+const FAST_PAN_PX_PER_SEC = clampInt(
+  Number(import.meta.env.VITE_TILE_FAST_PAN_PX_PER_SEC ?? DEFAULT_FAST_PAN_PX_PER_SEC),
+  500,
+  50_000
+)
+const FAST_PAN_ZOOM_BIAS = clampInt(
+  Number(import.meta.env.VITE_TILE_FAST_PAN_ZOOM_BIAS ?? DEFAULT_FAST_PAN_ZOOM_BIAS),
+  -10,
+  0
+)
+
+const RESCAN_INTERVAL_MS = 250
 
 /** Tile cache entry */
 interface TileCacheEntry {
@@ -30,6 +68,11 @@ function tileKey(z: number, x: number, y: number): string {
   return `${z}/${x}/${y}`
 }
 
+function clampInt(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min
+  return Math.max(min, Math.min(max, Math.trunc(value)))
+}
+
 export class TileSystem {
   private container: Container
   private tileCache = new Map<string, TileCacheEntry>()
@@ -40,6 +83,12 @@ export class TileSystem {
   private lastViewport: Viewport | null = null
   private lastTileZoom = -1
   private onDirty: (() => void) | null = null
+  private lastScanMs = 0
+  private lastViewportMs = 0
+  private requestTokens = REQUESTS_PER_SECOND
+  private lastTokenRefillMs = performance.now()
+  private tileZoomHoldUntilMs = 0
+  private tileZoomOverride: number | null = null
 
   constructor() {
     this.container = new Container()
@@ -57,13 +106,30 @@ export class TileSystem {
    * Render tiles based on current viewport
    */
   render(viewport: Viewport): void {
+    const now = performance.now()
+    const prevViewport = this.lastViewport
+    const prevViewportMs = this.lastViewportMs
+
     // Skip if viewport hasn't changed significantly
-    if (this.lastViewport && !this.viewportChanged(viewport)) {
+    if (
+      this.lastViewport &&
+      !this.viewportChanged(viewport) &&
+      now - this.lastScanMs < RESCAN_INTERVAL_MS
+    ) {
+      this.processQueue(now)
       return
     }
+    this.lastScanMs = now
+
+    const { tileZoom, suppressNewRequests } = this.chooseTileZoom(
+      viewport,
+      now,
+      prevViewport,
+      prevViewportMs
+    )
     this.lastViewport = { ...viewport }
 
-    const visibleTiles = getVisibleTiles(viewport)
+    const visibleTiles = getVisibleTiles(viewport, tileZoom)
     const currentZoom = visibleTiles[0]?.z ?? 0
 
     // If zoom level changed, clear old sprites
@@ -85,7 +151,11 @@ export class TileSystem {
 
       // Load tile if not in cache
       if (!this.tileCache.has(key) && !this.loadingTiles.has(key)) {
-        this.loadTile(tile)
+        if (suppressNewRequests) {
+          // Moving too fast: wait until the camera slows down before requesting more tiles.
+          continue
+        }
+        this.loadTile(tile, now)
       }
     }
 
@@ -100,6 +170,47 @@ export class TileSystem {
 
     // Clean up old cache entries periodically
     this.cleanupCache()
+
+    this.processQueue(now)
+  }
+
+  private chooseTileZoom(
+    viewport: Viewport,
+    now: number,
+    prevViewport: Viewport | null,
+    prevViewportMs: number
+  ): { tileZoom: number; suppressNewRequests: boolean } {
+    const base = calculateTileZoom(viewport.zoom)
+    let desired = Math.min(base, MAX_TILE_ZOOM)
+
+    let suppressNewRequests = false
+    if (prevViewport && prevViewportMs > 0) {
+      const dt = (now - prevViewportMs) / 1000
+      if (dt > 1e-6) {
+        const dxPx = (viewport.x - prevViewport.x) * viewport.zoom
+        const dyPx = (viewport.y - prevViewport.y) * viewport.zoom
+        const speedPxPerSec = Math.hypot(dxPx, dyPx) / dt
+
+        if (speedPxPerSec >= FAST_PAN_PX_PER_SEC * 2) {
+          suppressNewRequests = true
+        }
+
+        if (speedPxPerSec >= FAST_PAN_PX_PER_SEC) {
+          desired = Math.max(0, Math.min(desired, base + FAST_PAN_ZOOM_BIAS))
+          this.tileZoomHoldUntilMs = now + 1200
+          this.tileZoomOverride = desired
+        }
+      }
+    }
+
+    if (this.tileZoomOverride !== null && now < this.tileZoomHoldUntilMs) {
+      desired = Math.min(desired, this.tileZoomOverride)
+    } else {
+      this.tileZoomOverride = null
+    }
+
+    this.lastViewportMs = now
+    return { tileZoom: desired, suppressNewRequests }
   }
 
   private updateTileSprite(tile: TileCoord, viewport: Viewport): void {
@@ -134,7 +245,7 @@ export class TileSystem {
     sprite.height = screenSE[1] - screenNW[1]
   }
 
-  private async loadTile(tile: TileCoord): Promise<void> {
+  private async loadTile(tile: TileCoord, now: number): Promise<void> {
     const key = tileKey(tile.z, tile.x, tile.y)
 
     if (this.loadingTiles.has(key) || this.tileCache.has(key)) {
@@ -177,22 +288,33 @@ export class TileSystem {
       }
     }
 
-    if (this.activeRequests < MAX_CONCURRENT_REQUESTS) {
+    this.pendingRequests.push(() => void loadFn())
+    this.processQueue(now)
+  }
+
+  private processQueue(now: number = performance.now()): void {
+    this.refillTokens(now)
+    while (
+      this.pendingRequests.length > 0 &&
+      this.activeRequests < MAX_CONCURRENT_REQUESTS &&
+      this.requestTokens >= 1
+    ) {
+      const next = this.pendingRequests.shift()
+      if (!next) continue
+      this.requestTokens -= 1
       this.activeRequests++
-      void loadFn()
-    } else {
-      this.pendingRequests.push(() => {
-        this.activeRequests++
-        void loadFn()
-      })
+      next()
     }
   }
 
-  private processQueue(): void {
-    while (this.pendingRequests.length > 0 && this.activeRequests < MAX_CONCURRENT_REQUESTS) {
-      const next = this.pendingRequests.shift()
-      next?.()
-    }
+  private refillTokens(now: number): void {
+    const elapsedSeconds = (now - this.lastTokenRefillMs) / 1000
+    if (elapsedSeconds <= 0) return
+
+    const maxTokens = REQUESTS_PER_SECOND * 2
+    const next = Math.min(maxTokens, this.requestTokens + elapsedSeconds * REQUESTS_PER_SECOND)
+    this.requestTokens = next
+    this.lastTokenRefillMs = now
   }
 
   private cleanupCache(): void {

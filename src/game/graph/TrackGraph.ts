@@ -113,6 +113,13 @@ export class TrackGraph {
     string,
     { fromNodeId: string; toNodeId: string; preferredDirection: 'forward' | 'backward' | null }
   > = new Map()
+  private sectionIdByTrackId: Map<string, string> = new Map()
+  private sectionEdgeDirByTrackId: Map<
+    string,
+    { sectionId: string; forwardFrom: string; forwardTo: string }
+  > = new Map()
+  private sectionTrackIdsBySectionId: Map<string, string[]> = new Map()
+  private interlockingNodeIds: Set<string> = new Set()
 
   constructor() {
     this.graph = createGraph({ multigraph: true })
@@ -132,6 +139,10 @@ export class TrackGraph {
     this.nodePathCache.clear()
     this.linkByTrackId.clear()
     this.edgeOrientationByTrackId.clear()
+    this.sectionIdByTrackId.clear()
+    this.sectionEdgeDirByTrackId.clear()
+    this.sectionTrackIdsBySectionId.clear()
+    this.interlockingNodeIds.clear()
     this.finder = null
 
     const signalDirectionByNodeId = new Map<string, 'forward' | 'backward' | 'both'>()
@@ -227,6 +238,8 @@ export class TrackGraph {
       node.data.degree = degree
     })
 
+    this.buildSectionsFromNetwork(network)
+
     this.finder = pathFinder.aStar(this.graph, {
       oriented: true,
       distance: (fromNode, toNode, link) => {
@@ -284,6 +297,31 @@ export class TrackGraph {
     )
 
     this.buildStationPlatformData(network)
+  }
+
+  getSectionId(trackId: string): string | null {
+    return this.sectionIdByTrackId.get(trackId) ?? null
+  }
+
+  getSectionDirection(
+    trackId: string,
+    fromNodeId: string,
+    toNodeId: string
+  ): 'forward' | 'backward' | null {
+    const info = this.sectionEdgeDirByTrackId.get(trackId)
+    if (!info) return null
+    if (info.forwardFrom === fromNodeId && info.forwardTo === toNodeId) return 'forward'
+    if (info.forwardFrom === toNodeId && info.forwardTo === fromNodeId) return 'backward'
+    return null
+  }
+
+  isInterlockingNode(nodeId: string): boolean {
+    return this.interlockingNodeIds.has(nodeId)
+  }
+
+  getSectionTrackIds(sectionId: string): string[] | null {
+    const list = this.sectionTrackIdsBySectionId.get(sectionId)
+    return list ? [...list] : null
   }
 
   /**
@@ -807,6 +845,213 @@ export class TrackGraph {
   }
 
   // Private helper methods
+
+  private buildSectionsFromNetwork(network: NetworkData): void {
+    interface IncidentEdge {
+      trackId: string
+      otherNodeId: string
+    }
+
+    const kindByNodeId = new Map<string, NetworkNodeKind>()
+    for (const n of network.nodes) {
+      kindByNodeId.set(n.id, n.kind)
+    }
+
+    const incidentEdgesByNodeId = new Map<string, IncidentEdge[]>()
+    const edgeEndpointsByTrackId = new Map<string, { a: string; b: string }>()
+
+    const addIncident = (nodeId: string, trackId: string, otherNodeId: string): void => {
+      const list = incidentEdgesByNodeId.get(nodeId)
+      if (list) list.push({ trackId, otherNodeId })
+      else incidentEdgesByNodeId.set(nodeId, [{ trackId, otherNodeId }])
+    }
+
+    for (const e of network.edges) {
+      edgeEndpointsByTrackId.set(e.id, { a: e.fromNodeId, b: e.toNodeId })
+      addIncident(e.fromNodeId, e.id, e.toNodeId)
+      addIncident(e.toNodeId, e.id, e.fromNodeId)
+    }
+
+    const incidentCountByNodeId = new Map<string, number>()
+    for (const [nodeId, list] of incidentEdgesByNodeId.entries()) {
+      incidentCountByNodeId.set(nodeId, list.length)
+    }
+
+    const isBreakNode = (nodeId: string): boolean => {
+      const kind = kindByNodeId.get(nodeId)
+      if (!kind) return true
+      if (kind !== 'track') return true
+      const count = incidentCountByNodeId.get(nodeId) ?? 0
+      return count !== 2
+    }
+
+    for (const node of network.nodes) {
+      const count = incidentCountByNodeId.get(node.id) ?? 0
+      if (node.kind === 'switch' || count >= 3) {
+        this.interlockingNodeIds.add(node.id)
+      }
+    }
+
+    const visitedTrackIds = new Set<string>()
+
+    const chooseNextEdge = (nodeId: string, prevTrackId: string): IncidentEdge | null => {
+      const list = incidentEdgesByNodeId.get(nodeId)
+      if (!list) return null
+      for (const e of list) {
+        if (e.trackId !== prevTrackId) return e
+      }
+      return null
+    }
+
+    const normalizeChainOrientation = (nodes: string[], trackIds: string[]): void => {
+      const first = nodes[0]
+      const last = nodes[nodes.length - 1]
+      if (!first || !last) return
+      if (first.localeCompare(last) <= 0) return
+      nodes.reverse()
+      trackIds.reverse()
+    }
+
+    const normalizeCycleOrientation = (nodes: string[], trackIds: string[]): void => {
+      if (nodes.length === 0) return
+      let minIndex = 0
+      for (let i = 1; i < nodes.length; i++) {
+        const nodeId = nodes[i]
+        const minNodeId = nodes[minIndex]
+        if (nodeId && minNodeId && nodeId.localeCompare(minNodeId) < 0) {
+          minIndex = i
+        }
+      }
+
+      if (minIndex !== 0) {
+        const rotatedNodes = nodes.slice(minIndex).concat(nodes.slice(0, minIndex))
+        const rotatedTracks = trackIds.slice(minIndex).concat(trackIds.slice(0, minIndex))
+        nodes.splice(0, nodes.length, ...rotatedNodes)
+        trackIds.splice(0, trackIds.length, ...rotatedTracks)
+      }
+
+      if (nodes.length < 2) return
+      const next = nodes[1]
+      const prev = nodes[nodes.length - 1]
+      if (!next || !prev) return
+
+      if (next.localeCompare(prev) <= 0) return
+
+      const firstNode = nodes[0]
+      const lastTrackId = trackIds[trackIds.length - 1]
+      if (!firstNode || !lastTrackId) return
+
+      const reversedNodes = [firstNode, ...nodes.slice(1).reverse()]
+      const reversedTracks = [lastTrackId, ...trackIds.slice(0, trackIds.length - 1).reverse()]
+      nodes.splice(0, nodes.length, ...reversedNodes)
+      trackIds.splice(0, trackIds.length, ...reversedTracks)
+    }
+
+    for (const e of network.edges) {
+      if (visitedTrackIds.has(e.id)) continue
+
+      const endpoints = edgeEndpointsByTrackId.get(e.id)
+      if (!endpoints) continue
+
+      const a = endpoints.a
+      const b = endpoints.b
+      if (!a || !b) continue
+
+      const nodes: string[] = [a, b]
+      const trackIds: string[] = [e.id]
+      const localVisitedNodes = new Set<string>([a, b])
+      const localVisitedTracks = new Set<string>([e.id])
+
+      let isCycle = false
+
+      // Forward extension from b
+      {
+        let prevTrackId = e.id
+        let curNodeId = b
+
+        while (!isBreakNode(curNodeId)) {
+          const nextEdge = chooseNextEdge(curNodeId, prevTrackId)
+          if (!nextEdge) break
+          const nextTrackId = nextEdge.trackId
+          const nextNodeId = nextEdge.otherNodeId
+
+          if (localVisitedTracks.has(nextTrackId)) {
+            // Cycle or parallel-edge oscillation; treat as a cycle section.
+            isCycle = true
+            break
+          }
+
+          if (localVisitedNodes.has(nextNodeId)) {
+            // Close a cycle by including the final edge but not repeating the node.
+            localVisitedTracks.add(nextTrackId)
+            trackIds.push(nextTrackId)
+            isCycle = true
+            break
+          }
+
+          localVisitedTracks.add(nextTrackId)
+          localVisitedNodes.add(nextNodeId)
+          trackIds.push(nextTrackId)
+          nodes.push(nextNodeId)
+          prevTrackId = nextTrackId
+          curNodeId = nextNodeId
+        }
+      }
+
+      if (!isCycle) {
+        // Backward extension from a
+        const prefixNodes: string[] = []
+        const prefixTrackIds: string[] = []
+        let prevTrackId = e.id
+        let curNodeId = a
+
+        while (!isBreakNode(curNodeId)) {
+          const nextEdge = chooseNextEdge(curNodeId, prevTrackId)
+          if (!nextEdge) break
+          const nextTrackId = nextEdge.trackId
+          const nextNodeId = nextEdge.otherNodeId
+
+          if (localVisitedTracks.has(nextTrackId) || localVisitedNodes.has(nextNodeId)) {
+            break
+          }
+
+          localVisitedTracks.add(nextTrackId)
+          localVisitedNodes.add(nextNodeId)
+          prefixTrackIds.push(nextTrackId)
+          prefixNodes.push(nextNodeId)
+          prevTrackId = nextTrackId
+          curNodeId = nextNodeId
+        }
+
+        if (prefixNodes.length > 0) {
+          nodes.unshift(...prefixNodes.reverse())
+          trackIds.unshift(...prefixTrackIds.reverse())
+        }
+
+        normalizeChainOrientation(nodes, trackIds)
+      } else {
+        // Cycle: nodes are unique; trackIds include a closing edge (length matches).
+        normalizeCycleOrientation(nodes, trackIds)
+      }
+
+      const sectionId = `section:${[...trackIds].sort()[0] ?? ''}`
+      if (sectionId === 'section:') continue
+
+      for (const trackId of trackIds) {
+        visitedTrackIds.add(trackId)
+        this.sectionIdByTrackId.set(trackId, sectionId)
+      }
+      this.sectionTrackIdsBySectionId.set(sectionId, [...trackIds])
+
+      for (let i = 0; i < trackIds.length; i++) {
+        const trackId = trackIds[i]
+        const from = nodes[i]
+        const to = isCycle ? nodes[(i + 1) % nodes.length] : nodes[i + 1]
+        if (!trackId || !from || !to) continue
+        this.sectionEdgeDirByTrackId.set(trackId, { sectionId, forwardFrom: from, forwardTo: to })
+      }
+    }
+  }
 
   private interpolatePosition(
     coords: Point[],

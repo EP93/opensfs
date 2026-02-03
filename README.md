@@ -82,6 +82,9 @@ bun run preview
 - `bun run check` — Biome lint + formatting checks
 - `bun run check:fix` — auto-fix lint/format issues
 - `bun run build` — typecheck (`tsc -b`) and build bundle
+- `VITE_TILE_URL_TEMPLATE` — optional tile URL template override (defaults to `/osm-tiles/{z}/{x}/{y}.png`)
+- `VITE_TILE_REQUESTS_PER_SECOND` — tile request throttle (default `2`, to avoid spamming upstream providers)
+- `VITE_TILE_MAX_ZOOM` — cap tile zoom level (default `17`)
 
 ### Data pipeline commands (OpenStreetMap)
 

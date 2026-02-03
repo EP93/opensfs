@@ -251,8 +251,8 @@ export function calculateTileZoom(viewportZoom: number): number {
 /**
  * Get visible tiles for a viewport
  */
-export function getVisibleTiles(viewport: Viewport): TileCoord[] {
-  const tileZoom = calculateTileZoom(viewport.zoom)
+export function getVisibleTiles(viewport: Viewport, tileZoomOverride?: number): TileCoord[] {
+  const tileZoom = tileZoomOverride ?? calculateTileZoom(viewport.zoom)
 
   // Calculate lon/lat bounds of visible area
   const topLeft = screenToLonLat([0, 0], viewport)

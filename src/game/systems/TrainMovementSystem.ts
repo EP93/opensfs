@@ -68,6 +68,10 @@ interface TrainMovementState {
   blockedAtOffset: number | null
   /** Block ID that caused the stop */
   blockedBlockId: string | null
+  /** Reason for a blocked reservation (for debugging/diagnostics) */
+  blockedReason: 'block' | 'section_direction' | 'junction' | null
+  /** Resource ID that caused a block (blockId/sectionId/nodeId) */
+  blockedResourceId: string | null
   /** Current stopping target (station or blocked block) */
   approachTarget: { kind: 'station' | 'block'; offset: number } | null
   /** Cooldown after yielding to another train (seconds) */
@@ -169,6 +173,8 @@ export class TrainMovementSystem {
       currentStationId: effectiveStopStationIds[0] ?? train.originStationId,
       blockedAtOffset: null,
       blockedBlockId: null,
+      blockedReason: null,
+      blockedResourceId: null,
       approachTarget: null,
       yieldCooldownSeconds: 0,
     }
@@ -574,6 +580,8 @@ export class TrainMovementSystem {
     )
     movement.blockedAtOffset = update.blockedAtOffset
     movement.blockedBlockId = update.blockedBlockId
+    movement.blockedReason = update.blockedReason
+    movement.blockedResourceId = update.blockedResourceId
 
     if (update.blockedAtOffset === null || !update.blockedBlockId || !update.blockedByTrainId) {
       return
