@@ -195,7 +195,15 @@ export class Game {
     this.tileSystem.setOnDirty(() => this.scheduleRender())
 
     // Load default region
-    await this.loadRegion('freiburg')
+    try {
+      await this.loadRegion('rheintal')
+    } catch (error) {
+      console.warn(
+        'Failed to load default region "rheintal". Run: bun run build-region-data rheintal'
+      )
+      console.warn('Falling back to "freiburg".', error)
+      await this.loadRegion('freiburg')
+    }
   }
 
   async loadRegion(regionId: string): Promise<void> {

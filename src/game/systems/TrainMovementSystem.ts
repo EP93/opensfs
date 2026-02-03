@@ -46,6 +46,8 @@ const DEFAULT_CONFIG: MovementConfig = {
 interface TrainMovementState {
   /** Cached path result */
   path: PathResult
+  /** Timetable entry ID this movement state was built for (detects service chaining) */
+  timetableEntryId: string
   /** Current offset along path in meters */
   pathOffset: number
   /** Scheduled stop station IDs (including origin + terminus) */
@@ -156,6 +158,7 @@ export class TrainMovementSystem {
 
     const movementState: TrainMovementState = {
       path,
+      timetableEntryId: train.timetableEntryId,
       pathOffset: 0,
       stopStationIds: effectiveStopStationIds,
       stopOffsets,
@@ -196,6 +199,13 @@ export class TrainMovementSystem {
       return
     }
 
+    if (movement.timetableEntryId !== train.timetableEntryId) {
+      // Service was reassigned (interlining). Rebuild path + stop offsets from the new timetable entry.
+      this.movementStates.delete(train.id)
+      this.initializeTrain(train)
+      return
+    }
+
     movement.yieldCooldownSeconds = Math.max(0, movement.yieldCooldownSeconds - deltaSeconds)
 
     const pathPos = this.trackGraph.getPositionOnPath(movement.path, movement.pathOffset)
@@ -211,7 +221,7 @@ export class TrainMovementSystem {
         this.updateDeparting(train, movement, deltaSeconds)
         break
       case 'running':
-        this.updateRunning(train, movement, deltaSeconds)
+        this.updateRunning(train, movement, deltaSeconds, currentTime)
         break
       case 'approaching':
         this.updateApproaching(train, movement, deltaSeconds, currentTime)
@@ -220,6 +230,7 @@ export class TrainMovementSystem {
         this.updateAtStation(train, movement, deltaSeconds)
         break
       case 'depot':
+      case 'turnaround':
       case 'terminated':
         // No movement
         break
@@ -300,7 +311,8 @@ export class TrainMovementSystem {
   private updateRunning(
     train: TrainState,
     movement: TrainMovementState,
-    deltaSeconds: number
+    deltaSeconds: number,
+    currentTime: Date
   ): void {
     const typeSpec = train.consist.typeSpec
 
@@ -335,7 +347,21 @@ export class TrainMovementSystem {
 
     // Check if at end of path
     if (movement.pathOffset >= movement.path.totalLength - this.config.stopDistanceThreshold) {
-      this.transitionState(train, 'terminated')
+      const arrivedStationId = train.destinationStationId
+      movement.currentStationId = arrivedStationId
+      train.currentStopIndex = movement.stopStationIds.length - 1
+      movement.currentStopIndex = train.currentStopIndex
+      movement.nextStopIndex = movement.currentStopIndex
+
+      const lastNodeId = movement.chosenStopNodeIds[movement.chosenStopNodeIds.length - 1] ?? null
+      train.lastStopNodeId = lastNodeId
+      train.availableForServiceAt = new Date(
+        currentTime.getTime() + this.timetableSystem.getTurnaroundSeconds(arrivedStationId) * 1000
+      )
+      train.currentSpeed = 0
+      train.targetSpeed = 0
+      this.trainRegistry.updateStationIndex(train.id, null, arrivedStationId)
+      this.transitionState(train, 'turnaround')
     }
   }
 
@@ -407,7 +433,18 @@ export class TrainMovementSystem {
 
         // Check if this is the final destination
         if (arrivedStationId === train.destinationStationId) {
-          this.transitionState(train, 'terminated')
+          const stopNodeId = movement.chosenStopNodeIds[movement.currentStopIndex] ?? null
+          train.lastStopNodeId = stopNodeId
+          train.availableForServiceAt = new Date(
+            currentTime.getTime() +
+              this.timetableSystem.getTurnaroundSeconds(arrivedStationId ?? '') * 1000
+          )
+          train.currentSpeed = 0
+          train.targetSpeed = 0
+          movement.approachTarget = null
+          movement.blockedAtOffset = null
+          movement.blockedBlockId = null
+          this.transitionState(train, 'turnaround')
         } else {
           this.transitionState(train, 'at_station')
         }
@@ -439,6 +476,11 @@ export class TrainMovementSystem {
   private transitionState(train: TrainState, newState: OperationalState): void {
     this.trainRegistry.update(train.id, { state: newState })
     train.state = newState
+
+    if (newState === 'turnaround') {
+      // Clear reservations so parked trains don't block the network indefinitely.
+      this.reservationSystem?.clearTrain(train.id)
+    }
 
     if (newState === 'terminated') {
       this.reservationSystem?.clearTrain(train.id)

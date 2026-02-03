@@ -17,6 +17,7 @@
     "simplify-tracks": "bun run scripts/simplify-tracks.ts",
     "build-network": "bun run scripts/build-network.ts",
     "validate-network": "bun run scripts/validate-network.ts",
+    "validate-lines": "bun run scripts/validate-lines.ts",
     "build-region-data": "bun run scripts/build-region-data.ts"
   },
   "dependencies": {

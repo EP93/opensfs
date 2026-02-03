@@ -50,6 +50,7 @@ export class TrainRegistry {
       'running',
       'approaching',
       'at_station',
+      'turnaround',
       'terminated',
     ]
     for (const state of states) {
@@ -112,6 +113,8 @@ export class TrainRegistry {
       trainNumber,
       scheduledDeparture,
       timetableEntryId,
+      lastStopNodeId: null,
+      availableForServiceAt: null,
       trackPosition: {
         trackId: firstSegment.link.trackId,
         offset: 0,
@@ -137,6 +140,101 @@ export class TrainRegistry {
     this.addToIndices(train)
 
     return train
+  }
+
+  /**
+   * Reassign an existing train to a new service (service chaining).
+   * Ensures indices (line/state/station) stay correct.
+   */
+  reassignService(
+    trainId: string,
+    updates: {
+      lineId: string
+      trainNumber: number
+      timetableEntryId: string
+      originStationId: string
+      destinationStationId: string
+      scheduledDeparture: Date
+      path: PathResult
+      state?: OperationalState
+    }
+  ): boolean {
+    const train = this.trains.get(trainId)
+    if (!train) return false
+
+    if (!updates.path.found || updates.path.segments.length === 0) {
+      console.warn(`Cannot reassign train: empty path for ${trainId}`)
+      return false
+    }
+
+    // Line index
+    if (updates.lineId !== train.lineId) {
+      this.byLine.get(train.lineId)?.delete(trainId)
+      let lineSet = this.byLine.get(updates.lineId)
+      if (!lineSet) {
+        lineSet = new Set()
+        this.byLine.set(updates.lineId, lineSet)
+      }
+      lineSet.add(trainId)
+    }
+
+    const nextState = updates.state ?? 'preparing'
+    if (nextState !== train.state) {
+      this.byState.get(train.state)?.delete(trainId)
+      this.byState.get(nextState)?.add(trainId)
+    }
+
+    // Ensure station index points to the new origin (train must already be at this station).
+    for (const stationSet of this.byStation.values()) {
+      stationSet.delete(trainId)
+    }
+    let originSet = this.byStation.get(updates.originStationId)
+    if (!originSet) {
+      originSet = new Set()
+      this.byStation.set(updates.originStationId, originSet)
+    }
+    originSet.add(trainId)
+
+    const firstSegment = updates.path.segments[0]
+    if (!firstSegment) {
+      console.warn(`Cannot reassign train: empty path for ${trainId}`)
+      return false
+    }
+    const firstWorld = firstSegment.link.coordinates[0]
+
+    train.lineId = updates.lineId
+    train.trainNumber = updates.trainNumber
+    train.timetableEntryId = updates.timetableEntryId
+    train.originStationId = updates.originStationId
+    train.destinationStationId = updates.destinationStationId
+    train.scheduledDeparture = updates.scheduledDeparture
+
+    // Reset service/runtime fields.
+    train.currentStopIndex = 0
+    train.delay = 0
+    train.currentSpeed = 0
+    train.targetSpeed = 0
+    train.state = nextState
+    train.availableForServiceAt = null
+
+    train.trackPosition = {
+      trackId: firstSegment.link.trackId,
+      offset: 0,
+      direction: 1,
+    }
+    train.worldPosition = {
+      x: firstWorld?.[0] ?? train.worldPosition.x,
+      y: firstWorld?.[1] ?? train.worldPosition.y,
+      heading: 0,
+    }
+
+    train.path = updates.path.segments.map((s) => s.link.trackId)
+    train.pathIndex = 0
+    train.pathSegmentOffset = 0
+
+    this.initializeLoad(train)
+
+    return true
   }
 
   /**

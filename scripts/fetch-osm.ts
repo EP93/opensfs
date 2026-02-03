@@ -35,6 +35,10 @@ const REGIONS: Record<string, { name: string; bbox: [number, number, number, num
     name: 'Freiburg Region',
     bbox: [7.5, 47.5, 8.5, 48.5], // Expanded to include Basel, Offenburg, Villingen, Elzach
   },
+  rheintal: {
+    name: 'Rheintal (Basel–Karlsruhe)',
+    bbox: [7.45, 47.45, 8.55, 49.15],
+  },
 }
 
 const DEFAULT_OVERPASS_APIS = [

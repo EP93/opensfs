@@ -9,6 +9,7 @@ import type {
   TimetableEntry,
   TimetableStop,
 } from '@/types/timetable'
+import type { TrainState } from '@/types/train'
 import type { PlannedStopConstraint, TrackGraph } from '../graph/TrackGraph'
 import type { TrainRegistry } from '../registries/TrainRegistry'
 
@@ -18,11 +19,22 @@ export interface TimetableConfig {
   lookAheadMinutes: number
   /** How far ahead to spawn trains (in minutes before departure) */
   spawnAheadMinutes: number
+  /** Default turnaround time at terminus (in minutes) */
+  turnaroundMinutesDefault: number
+  /** Turnaround overrides by station ID */
+  turnaroundMinutesByStationId: Record<string, number>
 }
 
 const DEFAULT_CONFIG: TimetableConfig = {
   lookAheadMinutes: 120,
   spawnAheadMinutes: 60, // Spawn trains up to 1 hour before departure
+  turnaroundMinutesDefault: 6,
+  turnaroundMinutesByStationId: {
+    'station-node/3080746010': 12, // Basel Bad Bf
+    'station-node/21769883': 8, // Freiburg Hbf
+    'station-node/2931428598': 8, // Offenburg
+    'station-node/2574283615': 12, // Karlsruhe Hbf
+  },
 }
 
 export class TimetableSystem {
@@ -69,6 +81,12 @@ export class TimetableSystem {
    */
   getAllLines(): LineDefinition[] {
     return Array.from(this.lines.values())
+  }
+
+  getTurnaroundSeconds(stationId: string): number {
+    const override = stationId ? this.config.turnaroundMinutesByStationId[stationId] : undefined
+    const minutes = typeof override === 'number' ? override : this.config.turnaroundMinutesDefault
+    return Math.max(0, minutes) * 60
   }
 
   /**
@@ -407,6 +425,29 @@ export class TimetableSystem {
     return `${lineId}|${reverse ? 'rev' : 'fwd'}`
   }
 
+  private findReusableTrain(
+    originStationId: string,
+    entry: TimetableEntry,
+    departureTime: Date
+  ): TrainState | null {
+    const candidates = this.trainRegistry
+      .getByStation(originStationId)
+      .filter((t) => t.state === 'turnaround')
+      .filter((t) => t.consist.typeSpec.id === entry.typeId && t.consist.units === entry.units)
+      .filter((t) => !t.availableForServiceAt || t.availableForServiceAt <= departureTime)
+
+    if (candidates.length === 0) return null
+
+    candidates.sort((a, b) => {
+      const ad = a.availableForServiceAt?.getTime() ?? 0
+      const bd = b.availableForServiceAt?.getTime() ?? 0
+      if (ad !== bd) return ad - bd
+      return a.id.localeCompare(b.id)
+    })
+
+    return candidates[0] ?? null
+  }
+
   private spawnTrain(entry: TimetableEntry): void {
     const line = this.lines.get(entry.lineId)
     if (!line) {
@@ -422,11 +463,61 @@ export class TimetableSystem {
       return
     }
 
+    const firstStop = entry.stops[0]
+    const departureTime = this.minutesToDate(entry.date, firstStop?.departureMinutes ?? 0)
+
     const plannedStops: PlannedStopConstraint[] = entry.stops.map((s) => ({
       stationId: s.stationId,
       platform: s.platform,
     }))
 
+    // Try to reuse a trainset that is already waiting at this origin station.
+    const reusable = this.findReusableTrain(originStationId, entry, departureTime)
+    if (reusable) {
+      const departurePlatform =
+        reusable.lastStopNodeId !== null
+          ? this.trackGraph.getStopPlatformRef(reusable.lastStopNodeId)
+          : null
+
+      const reuseStops: PlannedStopConstraint[] = plannedStops.map((s, i) => ({
+        stationId: s.stationId,
+        platform: i === 0 ? (departurePlatform ?? s.platform) : s.platform,
+      }))
+
+      let { path } = this.trackGraph.buildPathForPlannedStops(reuseStops, destinationStationId)
+      if (!path.found) {
+        path = this.trackGraph.findPath(originStationId, destinationStationId)
+      }
+
+      if (path.found) {
+        const ok = this.trainRegistry.reassignService(reusable.id, {
+          lineId: entry.lineId,
+          trainNumber: entry.trainNumber,
+          timetableEntryId: entry.id,
+          originStationId,
+          destinationStationId,
+          scheduledDeparture: departureTime,
+          path,
+          state: 'preparing',
+        })
+
+        if (ok) {
+          const previousEntryId = this.entryIdByTrainId.get(reusable.id)
+          if (previousEntryId) this.trainIdByEntryId.delete(previousEntryId)
+
+          this.spawnedTrains.add(entry.id)
+          this.trainIdByEntryId.set(entry.id, reusable.id)
+          this.entryIdByTrainId.set(reusable.id, entry.id)
+
+          console.log(
+            `Reassigned train ${reusable.id} to ${entry.lineId} (${originStationId} → ${destinationStationId})`
+          )
+          return
+        }
+      }
+    }
+
+    // Otherwise spawn a new physical train.
     let { path } = this.trackGraph.buildPathForPlannedStops(plannedStops, destinationStationId)
     if (!path.found) {
       path = this.trackGraph.findPath(originStationId, destinationStationId)
@@ -437,9 +528,6 @@ export class TimetableSystem {
         return
       }
     }
-
-    const firstStop = entry.stops[0]
-    const departureTime = this.minutesToDate(entry.date, firstStop?.departureMinutes ?? 0)
 
     const train = this.trainRegistry.create({
       typeId: entry.typeId,
@@ -474,13 +562,11 @@ export class TimetableSystem {
   }
 
   private findTrainForEntry(entryId: string): { id: string; delay: number } | null {
-    // Simple implementation - in practice would need a mapping
-    for (const train of this.trainRegistry.getAll()) {
-      if (train.id.startsWith(entryId.split('-').slice(0, 2).join('-'))) {
-        return { id: train.id, delay: train.delay }
-      }
-    }
-    return null
+    const trainId = this.trainIdByEntryId.get(entryId)
+    if (!trainId) return null
+    const train = this.trainRegistry.get(trainId)
+    if (!train) return null
+    return { id: train.id, delay: train.delay }
   }
 
   private minutesToDate(baseDate: Date, minutes: number): Date {

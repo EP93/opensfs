@@ -70,6 +70,7 @@ const STATE_COLORS: Record<OperationalState, number> = {
   running: 0x00aa00,
   approaching: 0xf0a000,
   at_station: 0x0066cc,
+  turnaround: 0x3a4a7a,
   terminated: 0x666666,
 }
 

@@ -2,7 +2,7 @@
  * DebugOverlaySystem - Renders debug overlays for the network (signals + reserved blocks).
  */
 
-import { Container, Graphics } from 'pixi.js'
+import { Container, Graphics, Text, type TextStyle } from 'pixi.js'
 import type { TrackGraph } from '@/game/graph/TrackGraph'
 import { worldToScreen } from '@/game/utils/geo'
 import type { Viewport } from '@/types/game'
@@ -27,6 +27,9 @@ function hashColor(value: string): number {
 export class DebugOverlaySystem {
   private container: Container
   private graphics: Graphics
+  private stopLabelContainer: Container
+  private stopLabels: Text[] = []
+  private stopLabelStyle: TextStyle
   private trackGraph: TrackGraph
   private reservationSystem: TrackReservationSystem
   private signalSystem: SignalSystem
@@ -54,7 +57,21 @@ export class DebugOverlaySystem {
     this.container = new Container()
     this.container.label = 'debug-overlays'
     this.graphics = new Graphics()
+    this.stopLabelContainer = new Container()
+    this.stopLabelContainer.label = 'debug-stop-labels'
+    this.stopLabelStyle = {
+      fontFamily: 'Arial, sans-serif',
+      fontSize: 10,
+      fill: 0xffffff,
+      dropShadow: {
+        alpha: 0.7,
+        blur: 2,
+        color: 0x000000,
+        distance: 1,
+      },
+    } as TextStyle
     this.container.addChild(this.graphics)
+    this.container.addChild(this.stopLabelContainer)
   }
 
   loadNetwork(network: NetworkData): void {
@@ -96,6 +113,9 @@ export class DebugOverlaySystem {
 
   invalidate(): void {
     this.lastViewport = null
+    for (const t of this.stopLabels) {
+      t.visible = false
+    }
   }
 
   getContainer(): Container {
@@ -105,6 +125,7 @@ export class DebugOverlaySystem {
   render(viewport: Viewport): void {
     if (!this.showSignals && !this.showReservedBlocks && !this.showTrainRoute) {
       this.graphics.clear()
+      for (const t of this.stopLabels) t.visible = false
       this.lastViewport = { ...viewport }
       return
     }
@@ -246,6 +267,63 @@ export class DebugOverlaySystem {
         this.graphics.lineTo(s[0], s[1])
       }
       this.graphics.stroke()
+    }
+
+    this.renderTrainStops(viewport, movement, minX, maxX, minY, maxY)
+  }
+
+  private renderTrainStops(
+    viewport: Viewport,
+    movement: { chosenStopNodeIds: string[]; stopStationIds: string[] },
+    minX: number,
+    maxX: number,
+    minY: number,
+    maxY: number
+  ): void {
+    const nodeIds = movement.chosenStopNodeIds
+    if (nodeIds.length === 0) return
+
+    const showLabels = viewport.zoom >= 0.004
+    const radius = Math.max(3, Math.min(8, viewport.zoom / 0.008))
+
+    if (this.stopLabels.length !== nodeIds.length) {
+      this.stopLabelContainer.removeChildren()
+      this.stopLabels = nodeIds.map(() => {
+        const t = new Text({ text: '', style: this.stopLabelStyle })
+        t.anchor.set(0, 0.5)
+        this.stopLabelContainer.addChild(t)
+        return t
+      })
+    }
+
+    for (let i = 0; i < nodeIds.length; i++) {
+      const nodeId = nodeIds[i]
+      if (!nodeId) continue
+      const pos = this.trackGraph.getNodeWorldPosition(nodeId)
+      if (!pos) continue
+
+      const screen = worldToScreen(pos, viewport)
+      if (screen[0] < minX || screen[0] > maxX || screen[1] < minY || screen[1] > maxY) {
+        const label = this.stopLabels[i]
+        if (label) label.visible = false
+        continue
+      }
+
+      this.graphics.circle(screen[0], screen[1], radius)
+      this.graphics.fill({ color: 0xffffff, alpha: 0.75 })
+
+      const label = this.stopLabels[i]
+      if (!label) continue
+      if (!showLabels) {
+        label.visible = false
+        continue
+      }
+
+      const platform = this.trackGraph.getStopPlatformRef(nodeId)
+      label.text = platform ? `G${platform}` : '—'
+      label.x = screen[0] + radius + 3
+      label.y = screen[1]
+      label.visible = true
     }
   }
 
